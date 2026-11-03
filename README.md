@@ -154,7 +154,7 @@ npm install
 npx tauri build --bundles msi,nsis
 ```
 
-**With GitHub Actions.** Push a `v*` tag and `.github/workflows/release.yml` builds all platforms (macOS Silicon and Intel DMGs, Windows MSI/NSIS, Linux deb/rpm/AppImage), runs the tests first, and attaches everything to the release it creates.
+**With GitHub Actions.** Push a `v*` tag and `.github/workflows/release.yml` builds all platforms (macOS Silicon and Intel DMGs, Windows MSI/NSIS, Linux deb/rpm/AppImage — plus `dispatch-server` binaries), runs the tests first, and attaches everything to the release it creates. Cutting a release on your own devices instead: [`docs/release.md`](docs/release.md).
 
 ## Project layout
 
