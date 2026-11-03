@@ -16,8 +16,6 @@ Native on **macOS 13+** (Apple Silicon and Intel), **Windows** (10/11) and **Lin
 - **Profiles.** A built-in local profile keeps requests, collections and environments on this device only; any Postman account can be added as a profile with its own key, region and workspace memory. Switch from the footer in one click.
 - **Shared server (optional).** Self-hosted [`dispatch-server`](server/README.md) holds one Postman API key and serves the team through it: users sign in, get viewer/editor/creator/admin roles scoped to workspaces, secrets are redacted for viewers, deletions are admin-only, and every call is audited — with a built-in web admin panel. Without a server URL, Dispatch behaves exactly as before. Prefer Cloudflare? Deploy the same thing to your own account in one click:
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Roqak/dispatch)
-
 <a href="https://render.com/deploy?repo=https://github.com/Roqak/dispatch"><img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render" height="32"></a> · [Railway instructions](docs/deploy-railway.md) (template-based; needs a published template)
 
 - **WebSocket.** Requests whose URL starts with `ws://`/`wss://` open a live connection instead of a one-shot send: frames stream in (with sizes), you compose and send back, and Close ends the session cleanly.

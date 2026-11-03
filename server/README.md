@@ -2,7 +2,7 @@
 
 An optional, self-hostable backend for [Dispatch](../): it holds **one Postman API key** and serves multiple users through it, with authentication, roles and per-workspace access control. One binary, SQLite, no external services. If you'd rather use your own Postman key per person, keep Dispatch standalone — the server is entirely optional.
 
-> Prefer Cloudflare? [worker/](../worker/) deploys the same API to a Cloudflare Worker (D1 database, same admin panel) with `npx wrangler deploy`.
+> Prefer Cloudflare? [worker/](../worker/) deploys the same API to a Cloudflare Worker (D1 database, same admin panel) with `npm run deploy:server`.
 
 ## The idea
 
