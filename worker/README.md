@@ -1,6 +1,8 @@
 # dispatch-server on Cloudflare Workers
 
-Deploy this Worker and its D1 database with Wrangler. There is no Deploy to Cloudflare button: a button for a subfolder needs the whole app inside that folder, and the admin panel lives in `server/admin/`.
+The [Deploy to Cloudflare button](https://deploy.workers.cloudflare.com/?url=https://github.com/Roqak/dispatch/tree/main/worker) deploys this Worker and its D1 database, and prompts for the secrets. Leave `ADMIN_PASSWORD` as anything strong: it's only used when `REQUIRE_AUTH` is `"false"`. Manual deployment is below.
+
+This folder must stay self-contained, because the button treats it as the root of a new repository. Nothing in it can point outside `worker/`.
 
 The first account registered becomes admin and registration is open by default, so register yours straight after deploying.
 
@@ -21,7 +23,7 @@ No schema step is required: on the first request the Worker migrates itself (the
 
 ## What is configured where
 
-- `worker/wrangler.jsonc`: Worker name, D1 binding `DB` (auto-provisioned; to bind an existing database add `database_id` yourself), the admin panel assets (`server/admin/`), and the `REQUIRE_AUTH` / `POSTMAN_REGION` vars.
+- `worker/wrangler.jsonc`: Worker name, D1 binding `DB` (auto-provisioned; to bind an existing database add `database_id` yourself), the admin panel assets (`admin/`, a copy of the server's, kept identical by `npm test`), and the `REQUIRE_AUTH` / `POSTMAN_REGION` vars.
 - `worker/.dev.vars.example`: the secrets this Worker uses — `POSTMAN_API_KEY`, and `ADMIN_PASSWORD` when running without auth enforcement. Never commit `.dev.vars`.
 - `worker/src/index.js`: the whole Worker (same contract, roles, redaction and admin API as the Rust binary).
 

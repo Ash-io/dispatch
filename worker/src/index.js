@@ -5,7 +5,7 @@
 //
 // Bindings:
 //   DB      — D1 database (users, tokens, settings, uid maps, audit)
-//   ASSETS  — static assets binding serving ../server/admin (the admin panel)
+//   ASSETS  — static assets binding serving ./admin (the admin panel)
 //   vars    — REQUIRE_AUTH ("true"|"false"), POSTMAN_REGION ("us"|"eu"),
 //             optional POSTMAN_API_BASE override, optional PBKDF2_ITERATIONS
 //   secrets — POSTMAN_API_KEY, ADMIN_PASSWORD (open mode), PBKDF2_ITERATIONS
@@ -993,7 +993,7 @@ async function handleAdminAudit(env, request, requireAuth, query) {
 }
 
 // ---------------------------------------------------------------------------
-// the admin panel itself: served verbatim from ../server/admin via ASSETS.
+// the admin panel itself: served verbatim from ./admin via ASSETS.
 // GET /admin redirects so the panel's relative assets (./styles.css, ./app.js)
 // resolve against /admin/.
 
