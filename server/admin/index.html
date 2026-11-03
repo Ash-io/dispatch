@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light dark">
 <title>Dispatch Admin</title>
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -12,7 +13,7 @@
 <!-- Login view -->
 <main id="view-login" class="login-wrap">
   <section class="card login-card">
-    <h1>Dispatch <span class="brand-accent">Admin</span></h1>
+    <h1 class="brand"><img src="./favicon.svg" alt="">Dispatch <span class="brand-sub">Admin</span></h1>
     <p class="muted login-sub">Manage users, registration settings and the audit log.</p>
     <form id="login-form" data-mode="credentials" novalidate>
       <div class="field cred-only">
@@ -35,7 +36,7 @@
 <!-- App view: users / settings / audit reachable via tabs -->
 <div id="view-app" hidden>
   <header class="topbar">
-    <div class="brand">Dispatch <span class="brand-accent">Admin</span></div>
+    <div class="brand"><img src="./favicon.svg" alt="">Dispatch <span class="brand-sub">Admin</span></div>
     <nav class="tabs" aria-label="Admin sections">
       <button class="tab active" data-tab="users" type="button">Users</button>
       <button class="tab" data-tab="settings" type="button">Settings</button>
