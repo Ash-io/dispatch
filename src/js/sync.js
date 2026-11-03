@@ -3,7 +3,20 @@
 import { bridge } from './bridge.js';
 import { forUpload, ensureIds, SCHEMA_V21 } from './model.js';
 
-const api = (m, p, b) => bridge.postman(m, p, b);
+// The desktop client reports an expired Dispatch-server session with this exact wording.
+const EXPIRED = 'Your Dispatch server session has expired';
+let authLost = null;
+/** Lets the store watch (from activeProfile) for expired server sessions and offer "Sign in again". */
+export const onAuthLost = (fn) => { authLost = fn; };
+
+const api = async (m, p, b) => {
+  try {
+    return await bridge.postman(m, p, b);
+  } catch (e) {
+    if (String(e?.message ?? e).startsWith(EXPIRED)) authLost?.();
+    throw e;
+  }
+};
 const q = encodeURIComponent;
 
 export let callsRemaining = null;

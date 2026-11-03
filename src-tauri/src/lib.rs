@@ -227,12 +227,51 @@ async fn postman_api(
     path: String,
     body: Option<Value>,
     region: Option<String>,
+    server: Option<bool>,
+    base_url: Option<String>,
 ) -> Result<Value, String> {
     let profile_id = safe_name(&profile_id)?;
-    let key = secrets::get(&data_dir(&app)?, profile_id)?.ok_or_else(|| {
-        "This profile has no Postman API key. Add it under Settings → Profiles.".to_string()
-    })?;
-    postman::call(&key, region.as_deref().unwrap_or("us"), &method, &path, body).await
+    let secret = secrets::get(&data_dir(&app)?, profile_id)?;
+    let target = if server.unwrap_or(false) {
+        postman::Target::Server {
+            base_url: postman::server_base(base_url.as_deref().unwrap_or(""))?,
+            token: secret.ok_or_else(|| "This profile isn't signed in to your Dispatch server. Sign in again under Settings → Profiles.".to_string())?,
+        }
+    } else {
+        postman::Target::Postman {
+            api_key: secret.ok_or_else(|| "This profile has no Postman API key. Add it under Settings → Profiles.".to_string())?,
+            region: region.unwrap_or_else(|| "us".into()),
+        }
+    };
+    postman::call(&target, &method, &path, body).await
+}
+
+/// Sign a Dispatch server profile in: email+password login, or verify a
+/// pre-issued token. Stores the token as the profile's secret and returns /me.
+#[tauri::command]
+async fn server_auth(
+    app: AppHandle,
+    profile_id: String,
+    base_url: String,
+    email: Option<String>,
+    password: Option<String>,
+    token: Option<String>,
+) -> Result<Value, String> {
+    let profile_id = safe_name(&profile_id)?.to_string();
+    let base = postman::server_base(&base_url)?;
+    let need_creds = "Enter your email and password, or paste a token".to_string();
+    let token = match token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => t.to_string(),
+        None => {
+            let email = email.as_deref().map(str::trim).filter(|e| !e.is_empty()).ok_or_else(|| need_creds.clone())?;
+            let password = password.as_deref().filter(|p| !p.is_empty()).ok_or_else(|| need_creds.clone())?;
+            postman::server_login(&base, email, password).await?
+        }
+    };
+    // /me doubles as a check that the token is accepted before it's stored.
+    let me = postman::call(&postman::Target::Server { base_url: base.clone(), token: token.clone() }, "GET", "/me", None).await?;
+    secrets::set(&data_dir(&app)?, &profile_id, &token)?;
+    Ok(me)
 }
 
 #[tauri::command]
@@ -240,7 +279,8 @@ async fn set_api_key(app: AppHandle, profile_id: String, key: String, region: Op
     let profile_id = safe_name(&profile_id)?.to_string();
     let key = key.trim().to_string();
     // Verify before saving so a typo doesn't get stored.
-    let me = postman::call(&key, region.as_deref().unwrap_or("us"), "GET", "/me", None).await?;
+    let target = postman::Target::Postman { api_key: key.clone(), region: region.as_deref().unwrap_or("us").to_string() };
+    let me = postman::call(&target, "GET", "/me", None).await?;
     secrets::set(&data_dir(&app)?, &profile_id, &key)?;
     Ok(me)
 }
@@ -438,6 +478,7 @@ pub fn run() {
             folder_forget,
             postman_api,
             set_api_key,
+            server_auth,
             has_api_key,
             delete_api_key,
             has_legacy_api_key,

@@ -411,3 +411,15 @@ export function forExport(collection) {
   c.info._postman_id = c.info._postman_id || uuid();
   return c;
 }
+
+// ---------- dispatch server ----------
+
+/** Normalise a Dispatch server base URL: trim, drop any trailing slashes, require a host. */
+export function serverBaseUrl(raw) {
+  const url = String(raw ?? '').trim();
+  if (!/^https?:\/\//i.test(url)) throw new Error('The server URL must start with http:// or https://');
+  let host = '';
+  try { host = new URL(url).hostname; } catch { /* reported below */ }
+  if (!host) throw new Error('That server URL has no host, e.g. https://dispatch.example.com');
+  return url.replace(/\/+$/, '');
+}

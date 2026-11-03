@@ -35,6 +35,21 @@ test('parseUrl keeps variables and splits query', () => {
   assert.deepEqual(v.host, ['api', 'example', 'com']);
 });
 
+// ---------- dispatch server profiles ----------
+
+import { serverBaseUrl } from '../src/js/model.js';
+
+test('serverBaseUrl normalises base urls', () => {
+  assert.equal(serverBaseUrl(' https://dispatch.example.com/ '), 'https://dispatch.example.com');
+  assert.equal(serverBaseUrl('http://localhost:8080/api/'), 'http://localhost:8080/api');
+  assert.equal(serverBaseUrl('https://host/after/'), 'https://host/after');
+  assert.throws(() => serverBaseUrl('dispatch.example.com'), /must start with http/);
+  assert.throws(() => serverBaseUrl('ftp://x'), /must start with http/);
+  assert.throws(() => serverBaseUrl('https://'), /has no host/);
+  assert.throws(() => serverBaseUrl(''), /must start with http/);
+  assert.throws(() => serverBaseUrl(undefined), /must start with http/);
+});
+
 test('query with ? inside a variable is not split', () => {
   const u = parseUrl('{{host?x}}/a');
   assert.equal(u.query, undefined);

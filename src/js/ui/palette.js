@@ -74,7 +74,7 @@ function collectItems() {
   action('Settings', 'gear', async () => (await import('./panels.js')).openSettings(), '⌘,');
   action('Toggle response layout', 'columns', () => S.toggleLayout(), '⌥⌘V');
   action('Generate code snippet', 'code', async () => (await import('./request.js')).codeDialog(t), '⌥⌘C', t?.kind === 'request');
-  action('Sync with Postman', 'sync', () => S.refreshAll().then(() => toast('Up to date with Postman'), (e) => toast(errText(e), { error: true })), null, state.hasKey);
+  action(S.activeProfile()?.kind === 'server' ? 'Sync with your Dispatch server' : 'Sync with Postman', 'sync', () => S.refreshAll().then(() => toast('Up to date'), (e) => toast(errText(e), { error: true })), null, state.hasKey);
   action('No environment', 'x', () => S.setActiveEnv(null), null, !!S.activeEnvEntry());
   for (const w of state.workspaces || []) {
     if (w.id === state.ws?.id) continue;

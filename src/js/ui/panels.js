@@ -223,10 +223,18 @@ function apiKeyHelp({ open = false } = {}) {
 
 // ---------- settings ----------
 
-/** Shared "connect another Postman account" dialog. Resolves with the new profile. */
+/** Shared "connect another account" dialog: a Postman key or a Dispatch server. Resolves with the new profile. */
 export function addProfileDialog(then) {
   const body = h('div');
+  let kind = 'postman';
   const render = () => {
+    const typeRow = h('div', { class: 'row', style: { marginBottom: '10px' } },
+      h('button', { class: ['btn', kind === 'postman' && 'primary'], onclick: () => { if (kind !== 'postman') { kind = 'postman'; render(); } } }, 'Postman account'),
+      h('button', { class: ['btn', kind === 'server' && 'primary'], onclick: () => { if (kind !== 'server') { kind = 'server'; render(); } } }, 'Dispatch server'));
+    body.replaceChildren(typeRow, kind === 'postman' ? postmanForm() : serverForm());
+  };
+
+  const postmanForm = () => {
     const keyInput = h('input', { class: 'input', type: 'password', placeholder: 'PMAK-…', style: { width: '100%' } });
     const nameInput = h('input', { class: 'input', placeholder: 'Name (optional — defaults to the Postman username)', style: { width: '100%' } });
     const errLine = h('div', { class: 'hint', style: { color: 'var(--err)', minHeight: '18px', margin: '6px 0 0' } });
@@ -241,7 +249,8 @@ export function addProfileDialog(then) {
       } catch (e) { errLine.textContent = errText(e); connectBtn.disabled = false; connectBtn.textContent = 'Connect'; }
     } }, 'Connect');
     keyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectBtn.click(); });
-    body.replaceChildren(
+    setTimeout(() => keyInput.focus(), 50);
+    return h('div', null,
       h('p', null, 'Paste a Postman API key to add the account as a profile. Each profile syncs its own workspaces, collections and environments — switch any time from the sidebar footer.'),
       h('div', { class: 'form-grid' },
         h('label', null, 'Profile name'), nameInput,
@@ -249,10 +258,72 @@ export function addProfileDialog(then) {
         h('label', null, 'Region'), h('div', null, h('label', { class: 'check hint', style: { margin: 0 } }, eu, ' My Postman team is hosted in the EU region'))),
       errLine,
       apiKeyHelp());
-    setTimeout(() => keyInput.focus(), 50);
   };
+
+  const serverForm = () => {
+    const urlInput = h('input', { class: 'input', placeholder: 'https://dispatch.example.com', spellcheck: 'false', style: { width: '100%' } });
+    const nameInput = h('input', { class: 'input', placeholder: 'Name (optional — defaults to your server username)', style: { width: '100%' } });
+    const emailInput = h('input', { class: 'input', type: 'email', placeholder: 'you@company.com', autocomplete: 'email', style: { width: '100%' } });
+    const pwInput = h('input', { class: 'input', type: 'password', autocomplete: 'current-password', style: { width: '100%' } });
+    const tokenInput = h('input', { class: 'input', type: 'password', placeholder: 'Pre-issued token, instead of signing in', spellcheck: 'false', style: { width: '100%' } });
+    const errLine = h('div', { class: 'hint', style: { color: 'var(--err)', minHeight: '18px', margin: '6px 0 0' } });
+    const go = h('button', { class: 'btn primary', onclick: async () => {
+      go.disabled = true; go.textContent = 'Checking…'; errLine.textContent = '';
+      try {
+        const profile = await S.addServerProfile({ url: urlInput.value, name: nameInput.value, email: emailInput.value.trim(), password: pwInput.value, token: tokenInput.value.trim() });
+        toast(`Connected "${profile.name}"`);
+        render();
+        then?.(profile);
+      } catch (e) { errLine.textContent = errText(e); go.disabled = false; go.textContent = 'Sign in'; }
+    } }, 'Sign in');
+    [urlInput, nameInput, emailInput, pwInput, tokenInput].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') go.click(); }));
+    setTimeout(() => urlInput.focus(), 50);
+    return h('div', null,
+      h('p', null, 'Point Dispatch at a self-hosted Dispatch server. It mirrors Postman’s sync — workspaces, collections and environments keep working the same. Get the server URL and an account from whoever runs it.'),
+      h('div', { class: 'form-grid' },
+        h('label', null, 'Server URL'), urlInput,
+        h('label', null, 'Profile name'), nameInput,
+        h('label', null, 'Email'), emailInput,
+        h('label', null, 'Password'), pwInput,
+        h('label', null, 'Token'), h('div', null, tokenInput, h('p', { class: 'hint', style: { margin: '2px 0 0' } }, 'Optional — leave blank to sign in with your email and password.'))),
+      errLine);
+  };
+
   render();
-  modal({ title: 'Add Postman profile', body, wide: true });
+  modal({ title: 'Add profile', body, wide: true });
+}
+
+/** Re-authenticate an existing Dispatch server profile (e.g. after its session expired). */
+export function serverSignInDialog(p = S.activeProfile(), then) {
+  if (!p || p.kind !== 'server') return;
+  const urlInput = h('input', { class: 'input', value: p.url, spellcheck: 'false', style: { width: '100%' } });
+  const emailInput = h('input', { class: 'input', type: 'email', placeholder: state.accounts[p.id]?.email || 'you@company.com', autocomplete: 'email', style: { width: '100%' } });
+  const pwInput = h('input', { class: 'input', type: 'password', autocomplete: 'current-password', style: { width: '100%' } });
+  const errLine = h('div', { class: 'hint', style: { color: 'var(--err)', minHeight: '18px', margin: '6px 0 0' } });
+  let closeDlg;
+  const go = h('button', { class: 'btn primary', onclick: async () => {
+    go.disabled = true; go.textContent = 'Signing in…'; errLine.textContent = '';
+    try {
+      await S.serverSignIn({ profileId: p.id, url: urlInput.value, email: emailInput.value.trim(), password: pwInput.value });
+      toast(`Signed in to "${p.name}"`);
+      closeDlg();
+      then?.();
+    } catch (e) { errLine.textContent = errText(e); go.disabled = false; go.textContent = 'Sign in'; }
+  } }, 'Sign in');
+  [urlInput, emailInput, pwInput].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') go.click(); }));
+  closeDlg = modal({
+    title: `Sign in to ${p.name}`,
+    body: h('div', null,
+      h('p', null, 'Your Dispatch server session has expired — sign in again to keep this profile syncing.'),
+      h('div', { class: 'form-grid' },
+        h('label', null, 'Server URL'), urlInput,
+        h('label', null, 'Email'), emailInput,
+        h('label', null, 'Password'), pwInput,
+        h('label', null, ''), go),
+      errLine),
+    wide: true,
+  });
+  setTimeout(() => emailInput.focus(), 50);
 }
 
 /** Current version and a "Check for updates" button. */
@@ -273,18 +344,28 @@ export function openSettings() {
       const menu = (e) => showMenu(e, [
         { label: 'Rename…', icon: 'edit', onClick: async () => { const n = await promptDialog({ title: 'Rename profile', value: p.name }); if (n) { await S.renameProfile(p.id, n); render(); } } },
         p.kind === 'postman' && { label: `Region: switch to ${p.region === 'eu' ? 'US' : 'EU'}`, icon: 'globe', onClick: async () => { await S.setProfileRegion(p.id, p.region === 'eu' ? 'us' : 'eu'); render(); } },
-        p.kind === 'postman' && { label: 'Disconnect and remove key', icon: 'logout', onClick: async () => {
-          if (await confirmDialog({ title: `Disconnect "${p.name}"?`, message: 'Your API key is removed from this device. Collections already downloaded stay here, but stop syncing until you reconnect.', confirm: 'Disconnect', danger: true })) { await S.removeProfile(p.id); render(); }
-        } },
+        p.kind === 'server' && { label: 'Sign in again…', icon: 'key', onClick: async () => { await serverSignInDialog(p, render); } },
+        p.kind !== 'local' && {
+          label: p.kind === 'postman' ? 'Disconnect and remove key' : 'Disconnect and sign out',
+          icon: 'logout',
+          onClick: async () => {
+            const confirmMsg = p.kind === 'postman'
+              ? 'Your API key is removed from this device. Collections already downloaded stay here, but stop syncing until you reconnect.'
+              : 'Your server token is removed from this device. Collections already downloaded stay here, but stop syncing until you sign in again.';
+            if (await confirmDialog({ title: `Disconnect "${p.name}"?`, message: confirmMsg, confirm: 'Disconnect', danger: true })) { await S.removeProfile(p.id); render(); }
+          },
+        },
       ].filter(Boolean));
       return h('div', { class: 'row', style: { padding: '6px 0' } },
         h('div', { class: 'avatar', title: acc?.email || '' }, (acc?.fullName || acc?.username || p.name).slice(0, 1).toUpperCase()),
         h('div', { class: 'grow' },
           h('div', { style: { fontWeight: active ? 600 : 400 } }, p.name, active ? h('span', { class: 'muted', style: { fontWeight: 400 } }, ' · active') : null),
           h('div', { class: 'muted', style: { fontSize: '12px' } },
-            p.kind === 'local' ? 'This device — requests and collections stay here' : `${who || 'Postman'}${p.region === 'eu' ? ' · EU region' : ''}`)),
+            p.kind === 'local' ? 'This device — requests and collections stay here'
+              : p.kind === 'server' ? (who ? `${who} · ${p.url}` : p.url)
+              : `${who || 'Postman'}${p.region === 'eu' ? ' · EU region' : ''}`)),
         !active && h('button', { class: 'btn sm', onclick: () => S.switchProfile(p.id).catch((e) => toast(errText(e), { error: true })) }, 'Switch'),
-        p.kind === 'postman' && h('button', { class: 'icon-btn sm', title: 'Profile actions', onclick: menu }, icon('more')));
+        p.kind !== 'local' && h('button', { class: 'icon-btn sm', title: 'Profile actions', onclick: menu }, icon('more')));
     });
 
     const num = (key, min, max) => h('input', { class: 'input', type: 'number', min, max, value: s[key], style: { width: '120px' }, oninput: (e) => { s[key] = Math.max(min, Math.min(max, Number(e.target.value) || min)); S.saveSettings(); } });
@@ -340,8 +421,8 @@ export function openSettings() {
         h('h3', null, 'Profiles'),
         profileRows,
         h('div', { class: 'row', style: { marginTop: '10px' } },
-          h('button', { class: 'btn', onclick: () => addProfileDialog(() => render()) }, icon('plus'), 'Add Postman profile'),
-          h('span', { class: 'hint', style: { margin: 0 } }, 'The active profile decides which Postman account syncs and which API calls run against.'))),
+          h('button', { class: 'btn', onclick: () => addProfileDialog(() => render()) }, icon('plus'), 'Add profile'),
+          h('span', { class: 'hint', style: { margin: 0 } }, 'The active profile decides which account syncs and where cloud calls go.'))),
       h('div', { class: 'settings-section' }, h('h3', null, 'Syncing'),
         h('div', { class: 'form-grid' },
           h('label', null, 'When you save'),

@@ -2,7 +2,7 @@
 
 import { bridge, region, callCtx } from './bridge.js';
 import * as cloud from './sync.js';
-import { clone, newCollection, forExport, ensureIds, uuid } from './model.js';
+import { clone, newCollection, forExport, ensureIds, uuid, serverBaseUrl } from './model.js';
 import { loadVendor } from './vendor.js';
 
 export const LOCAL_WS = { id: 'local', name: 'On this device (not synced)', type: 'local' };
@@ -27,8 +27,9 @@ export const state = {
   },
   account: null, // { username, fullName, email } for the active profile
   accounts: {}, // profileId → account
-  profiles: [], // [{ id, name, kind: 'local'|'postman', region }]
-  hasKey: false,
+  profiles: [], // [{ id, name, kind: 'local'|'postman'|'server', region?, url? }]
+  hasKey: false, // the active profile syncs with Postman or a Dispatch server
+  sessionExpired: false, // a Dispatch server rejected its stored token
   workspaces: [LOCAL_WS],
   ws: null,
   tabs: [],
@@ -71,12 +72,15 @@ function serialTab(t) {
 
 const applyCallCtx = () => {
   const p = state.profiles.find((x) => x.id === state.settings.activeProfileId) || state.profiles[0];
-  callCtx.profileId = p.kind === 'postman' ? p.id : null;
+  const cloudP = cloudProfile(p);
+  callCtx.profileId = cloudP ? p.id : null;
   callCtx.region = p.region || 'us';
+  callCtx.server = p.kind === 'server';
+  callCtx.baseUrl = p.kind === 'server' ? p.url : null;
   region.value = callCtx.region;
 };
 
-const postmanProfile = (id) => state.profiles.find((p) => p.id === id && p.kind === 'postman');
+const cloudProfile = (p) => p.kind === 'postman' || p.kind === 'server';
 
 export async function init() {
   const [settings, tabs, history, accounts] = await Promise.all([
@@ -86,7 +90,7 @@ export async function init() {
   region.value = state.settings.region || 'us';
   state.history = history || [];
   state.accounts = accounts || {};
-  state.profiles = (state.settings.profiles || []).filter((p) => p && p.kind === 'postman' && p.id);
+  state.profiles = (state.settings.profiles || []).filter((p) => p && p.id && (p.kind === 'postman' || p.kind === 'server'));
 
   // First boot after profiles existed: migrate the legacy single key.
   if (!state.profiles.length && !(await bridge.hasApiKey('postman').catch(() => false)) && (await bridge.hasLegacyKey().catch(() => false))) {
@@ -99,7 +103,7 @@ export async function init() {
 
   if (!state.settings.onboarded && state.profiles.length) state.settings.onboarded = true;
   // The local profile is built in and always first.
-  state.profiles = [{ id: 'local', name: 'On this device (not synced)', kind: 'local', region: 'us' }].concat(state.profiles.filter((p) => p.kind === 'postman'));
+  state.profiles = [{ id: 'local', name: 'On this device (not synced)', kind: 'local', region: 'us' }].concat(state.profiles.filter((p) => p.kind !== 'local'));
   state.settings.profiles = state.profiles; // keep the persisted copy in one place
   // Upgraded users land on their existing Postman sync, as before.
   const firstPostman = state.profiles.find((p) => p.kind === 'postman');
@@ -110,7 +114,8 @@ export async function init() {
   if (tabs?.tabs) { state.tabs = tabs.tabs; state.activeTab = tabs.activeTab; }
   const meta = activeProfile();
   state.account = state.accounts[meta.id] || null;
-  state.hasKey = meta.kind === 'postman';
+  state.hasKey = meta.kind !== 'local';
+  state.sessionExpired = false;
 
   const wsList = state.hasKey ? ((await bridge.read(`workspaces-${meta.id}`)) || (await bridge.read('workspaces')) || []) : [];
   state.workspaces = wsList.length ? [...wsList, LOCAL_WS] : [LOCAL_WS];
@@ -141,6 +146,52 @@ export async function addProfile({ key, name, region: profRegion }) {
   return profile;
 }
 
+/** Sign a Dispatch server profile in with email+password, or verify a pre-issued token. */
+export async function serverAuth({ profileId, url: rawUrl, email, password, token }) {
+  const base = serverBaseUrl(rawUrl);
+  return bridge.serverAuth({ profileId, baseUrl: base, email: email || null, password: password || null, token: token || null });
+}
+
+/** Add a Dispatch server profile: sign in (or verify a token), store it, switch to it. */
+export async function addServerProfile({ url, name, email, password, token }) {
+  const id = uuid().replace(/-/g, '');
+  const me = await serverAuth({ profileId: id, url, email, password, token });
+  const profile = { id, name: (name || '').trim() || me.user?.username || me.user?.fullName || (email || '').split('@')[0] || 'Dispatch server', kind: 'server', url: serverBaseUrl(url) };
+  state.profiles.push(profile);
+  state.settings.profiles = state.profiles;
+  state.accounts[id] = { username: me.user?.username, fullName: me.user?.fullName, email: me.user?.email || email || null };
+  await bridge.write('accounts', state.accounts);
+  state.settings.onboarded = true;
+  await switchProfile(id);
+  return profile;
+}
+
+/** Sign an existing Dispatch server profile in again, keeping the profile. */
+export async function serverSignIn({ profileId, url, email, password, token }) {
+  const profile = state.profiles.find((p) => p.id === profileId && p.kind === 'server');
+  if (!profile) throw new Error('That profile is no longer available.');
+  const me = await serverAuth({ profileId, url, email, password, token });
+  profile.url = serverBaseUrl(url);
+  state.settings.profiles = state.profiles;
+  state.accounts[profileId] = { username: me.user?.username, fullName: me.user?.fullName, email: me.user?.email || state.accounts[profileId]?.email || email || null };
+  state.sessionExpired = false;
+  if (profile.id === state.settings.activeProfileId) {
+    state.account = state.accounts[profileId];
+    applyCallCtx();
+  }
+  saveSettings();
+  emit('all');
+  refreshAll().catch(() => {});
+  return me;
+}
+
+/** A Dispatch server rejected its stored token: remember it so the UI offers "Sign in again". */
+cloud.onAuthLost(() => {
+  if (activeProfile()?.kind !== 'server' || state.sessionExpired) return;
+  state.sessionExpired = true;
+  emit('all');
+});
+
 export async function switchProfile(id) {
   if (id === state.settings.activeProfileId || !state.profiles.some((p) => p.id === id)) return;
   saveWorkspace(); // leave the current workspace persisted on its own profile
@@ -148,7 +199,8 @@ export async function switchProfile(id) {
   state.settings.activeProfileId = id;
   applyCallCtx();
   state.account = state.accounts[id] || null;
-  state.hasKey = profile.kind === 'postman';
+  state.hasKey = profile.kind !== 'local';
+  state.sessionExpired = false;
   saveSettings();
   const wsList = state.hasKey ? ((await bridge.read(`workspaces-${id}`)) || (id === 'postman' && (await bridge.read('workspaces'))) || []) : [];
   state.workspaces = wsList.length ? [...wsList, LOCAL_WS] : [LOCAL_WS];
@@ -178,10 +230,10 @@ export async function setProfileRegion(id, value) {
   emit('all');
 }
 
-/** Remove a Postman profile: deletes its stored key. The local profile stays. */
+/** Remove a cloud profile (Postman or Dispatch server): deletes its stored secret. The local profile stays. */
 export async function removeProfile(id) {
   const profile = state.profiles.find((p) => p.id === id);
-  if (!profile || profile.kind !== 'postman') return;
+  if (!profile || !cloudProfile(profile)) return;
   await bridge.deleteApiKey(id);
   state.profiles = state.profiles.filter((p) => p.id !== id);
   state.settings.profiles = state.profiles;

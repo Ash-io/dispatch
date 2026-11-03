@@ -33,11 +33,11 @@ export function renderSidebar(root) {
   }, h('span', { class: 'ellipsis' }, current?.name || 'Workspace'));
 
   const syncBtn = h('button', {
-    class: 'icon-btn', title: state.hasKey ? 'Sync with Postman' : 'Connect Postman to sync',
+    class: 'icon-btn', title: state.hasKey ? (S.activeProfile()?.kind === 'server' ? 'Sync with your Dispatch server' : 'Sync with Postman') : 'Connect Postman to sync',
     disabled: !S.isCloud() && state.hasKey,
     onclick: async () => {
       if (!state.hasKey) return (await import('./panels.js')).openSettings();
-      try { await S.refreshAll(); toast('Up to date with Postman'); } catch (e) { toast(errText(e), { error: true }); }
+      try { await S.refreshAll(); toast(S.activeProfile()?.kind === 'server' ? 'Up to date with your Dispatch server' : 'Up to date with Postman'); } catch (e) { toast(errText(e), { error: true }); }
     },
   }, icon('sync', state.syncing ? 'spin' : ''));
 
@@ -72,12 +72,14 @@ export function renderSidebar(root) {
 }
 
 function footer() {
-  const dotClass = !state.hasKey ? 'off' : state.syncError ? 'err' : state.syncing ? 'busy' : '';
-  const label = !state.hasKey ? 'Local — nothing syncs' : state.syncError ? 'Sync problem' : state.syncing ? 'Syncing…' : S.isCloud() ? `Synced ${state.lastSync ? relTime(state.lastSync) : ''}`.trim() : 'Connected · local workspace';
+  const expired = state.sessionExpired && S.activeProfile()?.kind === 'server';
+  const dotClass = expired ? 'err' : !state.hasKey ? 'off' : state.syncError ? 'err' : state.syncing ? 'busy' : '';
+  const label = expired ? 'Server session expired' : !state.hasKey ? 'Local — nothing syncs' : state.syncError ? 'Sync problem' : state.syncing ? 'Syncing…' : S.isCloud() ? `Synced ${state.lastSync ? relTime(state.lastSync) : ''}`.trim() : 'Connected · local workspace';
   return h('div', { class: 'side-foot' },
     profileChip(),
     h('span', { class: ['sync-dot', dotClass] }),
     h('span', { class: 'grow ellipsis muted', title: state.syncError || '' }, label),
+    expired && h('button', { class: 'btn sm', onclick: async () => (await import('./panels.js')).serverSignInDialog() }, 'Sign in again'),
     h('button', { class: 'icon-btn', title: 'Settings (⌘,)', onclick: async () => (await import('./panels.js')).openSettings() }, icon('gear')));
 }
 
@@ -87,11 +89,11 @@ function profileChip() {
     class: 'side-profile', title: 'Switch profile',
     onclick: (e) => showMenu(e, [
       ...state.profiles.map((pr) => ({
-        label: `${pr.id === p.id ? '● ' : ''}${pr.name}${pr.kind === 'postman' ? (pr.region === 'eu' ? ' · EU' : ' · Postman') : ' · this device'}`,
+        label: `${pr.id === p.id ? '● ' : ''}${pr.name}${pr.kind === 'postman' ? (pr.region === 'eu' ? ' · EU' : ' · Postman') : pr.kind === 'server' ? ' · server' : ' · this device'}`,
         onClick: () => { if (pr.id !== p.id) S.switchProfile(pr.id).catch((er) => toast(errText(er), { error: true })); },
       })),
       '-',
-      { label: 'Add Postman profile…', icon: 'plus', onClick: async () => (await import('./panels.js')).addProfileDialog() },
+      { label: 'Add profile…', icon: 'plus', onClick: async () => (await import('./panels.js')).addProfileDialog() },
       { label: 'Manage profiles…', icon: 'gear', onClick: async () => (await import('./panels.js')).openSettings() },
     ]),
   },

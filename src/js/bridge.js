@@ -7,8 +7,9 @@ export const isDesktop = !!tauri;
 const invoke = (cmd, args) => tauri.invoke(cmd, args);
 const mock = isDesktop ? null : await import('./mock.js');
 // Which profile cloud calls run as, and its region. Kept in sync by the store;
-// callCtx.profileId is null for the local profile (Postman is never called).
-export const callCtx = isDesktop ? { profileId: null, region: 'us' } : mock.mockCtx;
+// callCtx.profileId is null for the local profile (cloud is never called).
+// For kind:'server' profiles, server is true and baseUrl is the backend to hit.
+export const callCtx = isDesktop ? { profileId: null, region: 'us', server: false, baseUrl: null } : mock.mockCtx;
 
 // Legacy single-region handle kept for callers that read/write region.value;
 // it maps onto the active profile's region through callCtx.
@@ -62,7 +63,8 @@ export const bridge = isDesktop
       folderRead: (dir) => invoke('folder_read', { dir }),
       folderWrite: (dir, files, prune) => invoke('folder_write', { dir, files, prune }),
       folderForget: (dir) => invoke('folder_forget', { dir }),
-      postman: (method, path, body) => invoke('postman_api', { method, path, body: body ?? null, profileId: callCtx.profileId ?? '', region: callCtx.region }),
+      postman: (method, path, body) => invoke('postman_api', { method, path, body: body ?? null, profileId: callCtx.profileId ?? '', region: callCtx.region, server: !!callCtx.server, baseUrl: callCtx.baseUrl ?? null }),
+      serverAuth: (opts) => invoke('server_auth', { profileId: opts.profileId, baseUrl: opts.baseUrl, email: opts.email ?? null, password: opts.password ?? null, token: opts.token ?? null }),
       setApiKey: (key, profileId, region) => invoke('set_api_key', { key, profileId, region }),
       hasApiKey: (profileId) => invoke('has_api_key', { profileId }),
       deleteApiKey: (profileId) => invoke('delete_api_key', { profileId }),

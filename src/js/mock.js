@@ -45,7 +45,7 @@ const mockCloud = {
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Active profile for cloud calls; the store syncs it in browser mode too.
-export const mockCtx = { profileId: null, region: 'us' };
+export const mockCtx = { profileId: null, region: 'us', server: false, baseUrl: null };
 const keyName = () => `apikey:${mockCtx.profileId ?? 'local'}`;
 
 // A plausible split of the total, so the timing popover can be exercised.
@@ -153,7 +153,7 @@ export const mockBridge = {
   async deleteCookie(domain, path, name) { const i = mockCookies.findIndex((x) => x.domain === domain && x.path === path && x.name === name); if (i >= 0) mockCookies.splice(i, 1); return i >= 0; },
   async postman(method, path, body) {
     await delay(200);
-    if (!read(keyName())) throw 'This profile has no Postman API key. Add it under Settings → Profiles.';
+    if (!read(keyName())) throw mockCtx.server ? "This profile isn't signed in to your Dispatch server. Sign in again under Settings → Profiles." : 'This profile has no Postman API key. Add it under Settings → Profiles.';
     // A tiny fake Postman that remembers writes, so sync flows can be exercised.
     const cloud = read('mockcloud') || JSON.parse(JSON.stringify(mockCloud));
     const save = () => write('mockcloud', cloud);
@@ -213,6 +213,17 @@ export const mockBridge = {
     write('mockcloud', cloud);
   },
   async setApiKey(key, profileId, region) { await delay(300); if (!key.startsWith('PMAK-')) throw 'Postman rejected the API key.'; mockCtx.profileId = profileId; mockCtx.region = region || 'us'; write(`apikey:${profileId}`, key); return mockCloud['/me']; },
+  async serverAuth({ profileId, baseUrl, email, password, token }) {
+    await delay(300);
+    const base = String(baseUrl || '').trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//.test(base)) throw 'The server URL must start with http:// or https://';
+    if (token?.trim()) write(`apikey:${profileId}`, token.trim());
+    else {
+      if (!String(email || '').trim() || !password) throw 'Enter your email and password, or paste a token';
+      write(`apikey:${profileId}`, 'mock-server-token');
+    }
+    return mockCloud['/me'];
+  },
   async hasApiKey(profileId) { return !!read(`apikey:${profileId}`); },
   async deleteApiKey(profileId) { ls.removeItem(`dispatch:apikey:${profileId}`); },
   async hasLegacyKey() { return !!read('apikey'); },
