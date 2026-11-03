@@ -62,10 +62,7 @@ Secrets are stored in the Keychain on macOS and in 0600 files elsewhere. Don't d
 ## Landing page and copy
 
 - Pushing to `main` deploys the site through Cloudflare, so landing page changes go live on merge.
+- Keep only the site's `wrangler.toml` at the repo root. The server's config is `worker/wrangler.jsonc` (`npm run deploy:server`). A `wrangler.jsonc` at the root takes priority and deploys over the landing page.
 - Describe Dispatch as a native API client, with Postman sync as a feature. Don't position it as "the API client that keeps your Postman account".
 - Analytics: PostHog in `site/index.html` only initialises on `dispatch.ashlabs.xyz`, with no cookies or session recording. A delegated click listener classifies download, releases and source links, so keep new links in those URL shapes. PostHog filters headless browsers, so test with a normal user agent.
 - Only make claims that can be verified. Benchmark numbers must come from a real measurement and name the version measured.
-
-## Known issue
-
-The repo root has two Wrangler configs: `wrangler.toml` (landing page) and `wrangler.jsonc` (`dispatch-server`). A bare `wrangler deploy` uses `wrangler.jsonc`, so it deploys the server, not the site. Always pass `--config` until this is resolved.
