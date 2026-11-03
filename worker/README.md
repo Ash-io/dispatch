@@ -1,10 +1,13 @@
 # dispatch-server on Cloudflare Workers
 
-The [Deploy to Cloudflare button](https://developers.cloudflare.com/workers/platform/deploy-buttons/) (in the top-level README) deploys this exact Worker — plus its D1 database and secrets prompt — in one flow. Manual deployment:
+Deploy this Worker and its D1 database with Wrangler. There is no Deploy to Cloudflare button: a button for a subfolder needs the whole app inside that folder, and the admin panel lives in `server/admin/`.
+
+The first account registered becomes admin and registration is open by default, so register yours straight after deploying.
 
 ```sh
-npm run deploy          # from the repo root: provisions D1, binds it, deploys;
+npm run deploy:server   # from the repo root: provisions D1, binds it, deploys;
                         # wrangler creates the database on first deploy
+cd worker
 npx wrangler secret put POSTMAN_API_KEY   # the one shared Postman key
 # REQUIRE_AUTH=false deploys additionally need:
 npx wrangler secret put ADMIN_PASSWORD
@@ -13,22 +16,22 @@ npx wrangler secret put ADMIN_PASSWORD
 No schema step is required: on the first request the Worker migrates itself (the same idempotent `CREATE TABLE IF NOT EXISTS` set `server/src/db.rs` runs at boot). `worker/schema.sql` exists for manual inspection/re-apply:
 
 ```sh
-npx wrangler d1 execute dispatch-server --remote --file worker/schema.sql
+(cd worker && npx wrangler d1 execute dispatch-server --remote --file schema.sql)
 ```
 
 ## What is configured where
 
-- `wrangler.jsonc` (repo root): Worker name, D1 binding `DB` (auto-provisioned; to bind an existing database add `database_id` yourself), the admin panel assets (`server/admin/`), and the `REQUIRE_AUTH` / `POSTMAN_REGION` vars.
-- `.dev.vars.example` (repo root): the secrets the Deploy button prompts for — `POSTMAN_API_KEY`, and `ADMIN_PASSWORD` when running without auth enforcement. Never commit `.dev.vars`.
+- `worker/wrangler.jsonc`: Worker name, D1 binding `DB` (auto-provisioned; to bind an existing database add `database_id` yourself), the admin panel assets (`server/admin/`), and the `REQUIRE_AUTH` / `POSTMAN_REGION` vars.
+- `worker/.dev.vars.example`: the secrets this Worker uses — `POSTMAN_API_KEY`, and `ADMIN_PASSWORD` when running without auth enforcement. Never commit `.dev.vars`.
 - `worker/src/index.js`: the whole Worker (same contract, roles, redaction and admin API as the Rust binary).
 
 ## Local development
 
 ```sh
-npx wrangler dev        # from the repo root; local D1, panel on /admin/
+cd worker && npx wrangler dev   # local D1, panel on /admin/
 ```
 
-Local state lives in `.wrangler/` (gitignored). If a request answers `Server database failed to initialize`, the previous section's `d1 execute --file worker/schema.sql --local` re-applies by hand.
+Local state lives in `.wrangler/` (gitignored). If a request answers `Server database failed to initialize`, the previous section's `d1 execute --file schema.sql --local` (from `worker/`) re-applies by hand.
 
 ## Behavior notes
 

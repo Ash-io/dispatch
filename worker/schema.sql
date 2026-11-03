@@ -1,7 +1,7 @@
 -- dispatch-server on Cloudflare Workers: D1 schema.
 -- Mirrors server/src/db.rs::migrate() exactly (CREATE TABLE IF NOT EXISTS;
 -- idempotent, safe to re-apply with: npx wrangler d1 execute dispatch-server --remote --file schema.sql
--- or `--local` while running `wrangler dev`).
+-- or `--local` while running `wrangler dev`, both from worker/).
 
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
