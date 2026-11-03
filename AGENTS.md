@@ -37,7 +37,8 @@ For UI work without the native shell, open `src/index.html` in a browser. It run
 ## Keep these in sync
 
 - **Native calls:** `src/js/bridge.js` has a Tauri path and a mock path. When you add or change a native command, update `src/js/mock.js` too, so the browser build keeps working.
-- **Server API:** `server/` and `worker/src/index.js` implement the same contract, roles, redaction and admin API. Change both. Both also serve the admin panel from `server/admin/`.
+- **Server API:** `server/` and `worker/src/index.js` implement the same contract, roles, redaction and admin API. Change both. The admin panel exists twice, in `server/admin/` and `worker/admin/`: edit both, and `npm test` fails if they differ.
+- **Deploy to Cloudflare button:** `worker/` must stay self-contained, because the button treats it as the root of a new repository. Nothing in it can point outside the folder.
 - **Database schema:** the same tables are defined in `server/src/db.rs`, `worker/schema.sql` and the migrations in `worker/src/index.js`. Keep all three identical.
 - **Version:** bump `package.json`, `package-lock.json` (both top-level fields), `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` together. `npm ci` fails if they drift.
 

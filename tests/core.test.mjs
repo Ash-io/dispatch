@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { readdirSync, readFileSync } from 'node:fs';
 import { parseUrl, setRawUrl, rawWithQuery, normaliseImport, forUpload, findItem, effectiveAuth, getScript, setScript, duplicateItem, findExample, exampleFromResponse, newExample, duplicateExample, previewLanguage } from '../src/js/model.js';
 import { Scope, Resolver, DYNAMIC, localOnlyKeys, persistCurrent, resetCurrent } from '../src/js/vars.js';
 import { runScript } from '../src/js/scripts.js';
@@ -1210,4 +1211,13 @@ test('errors thrown in sendRequest callbacks and timers are script errors, not s
     await new Promise((r) => setTimeout(r, 20));
     assert.deepEqual(unhandled, []);
   } finally { process.off('unhandledRejection', onUnhandled); }
+});
+
+test('the Worker ships the same admin panel as the server', () => {
+  const dir = (d) => new URL(`../${d}/`, import.meta.url);
+  const names = readdirSync(dir('server/admin')).sort();
+  assert.deepEqual(readdirSync(dir('worker/admin')).sort(), names);
+  for (const n of names) {
+    assert.equal(readFileSync(new URL(n, dir('worker/admin')), 'utf8'), readFileSync(new URL(n, dir('server/admin')), 'utf8'), n);
+  }
 });
