@@ -4,15 +4,17 @@
 // Default export: { fetch }. Modules format, no build step.
 //
 // Bindings:
-//   DB      — D1 database (users, tokens, settings, uid maps, audit)
+//   DB      — D1 database (users, tokens, settings, Postman accounts, uid maps, audit)
 //   ASSETS  — static assets binding serving ./admin (the admin panel)
 //   vars    — REQUIRE_AUTH ("true"|"false"), POSTMAN_REGION ("us"|"eu"),
 //             optional POSTMAN_API_BASE override, optional PBKDF2_ITERATIONS
-//   secrets — POSTMAN_API_KEY, ADMIN_PASSWORD (open mode), PBKDF2_ITERATIONS
+//   secrets — SECRET_KEY (encrypts Postman keys added in the panel), optional
+//             POSTMAN_API_KEY, ADMIN_PASSWORD (open mode), PBKDF2_ITERATIONS
 
 const ROLES = ["viewer", "editor", "creator", "admin"];
 const ROLE_RANK = { viewer: 0, editor: 1, creator: 2, admin: 3 };
 const RATE_LIMIT_HEADER = "x-ratelimit-remaining-month";
+const NO_ACCOUNT_MESSAGE = "This server has no Postman account connected. An admin can add one under Postman accounts in the admin panel.";
 // Per-workspace list cache for granted principals; keys are scoped per grant
 // set so two differently-granted principals never share stale views.
 const LIST_CACHE_TTL = 60_000;
@@ -95,15 +97,15 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-// Best-effort audit row: (ts, user_id, email, 'proxy', method, path, status).
+// Best-effort audit row: (ts, user_id, email, action, method, path, status).
 // D1 can't bind JS null, so nullable columns become SQL NULL literals.
-async function auditInsert(env, userId, email, method, path, status) {
+async function auditInsert(env, userId, email, method, path, status, action = "proxy") {
   try {
-    const slots = ["?", userId === null ? "NULL" : "?", email === null ? "NULL" : "?", "'proxy'", "?", "?", "?"];
+    const slots = ["?", userId === null ? "NULL" : "?", email === null ? "NULL" : "?", "?", "?", "?", "?"];
     const args = [nowIso()];
     if (userId !== null) args.push(userId);
     if (email !== null) args.push(email);
-    args.push(method, path, status);
+    args.push(action, method, path, status);
     await dbRun(env,
       `INSERT INTO audit (ts, user_id, email, action, method, path, status) VALUES (${slots.join(", ")})`,
       args);
@@ -270,17 +272,26 @@ function familyOf(path) {
 
 // Minimum role for each proxied call, plus the message for when that exact
 // tier is what was missed.
-function minRole(family, method, hasUid) {
+function minRole(family, method, rest) {
+  const hasUid = rest !== "";
+  // SCIM and integrations act on the whole Postman team behind a key.
+  if (family === "scim" || family === "integrations") {
+    return [ROLE_RANK.admin, "Only admins can do this"];
+  }
   if (method === "GET" || method === "HEAD") return [ROLE_RANK.viewer, ""];
   if (method === "DELETE") {
     if (hasUid && (family === "collections" || family === "environments")) {
       return [ROLE_RANK.admin, "Only admins can delete collections and environments"];
     }
+    if (family === "workspaces" && hasUid && !rest.includes("/")) {
+      return [ROLE_RANK.admin, "Only admins can delete workspaces"];
+    }
     return [ROLE_RANK.editor, ""];
   }
   // POST / PATCH / PUT and anything else: editor+, while creating a
-  // collection and touching apis/monitors/mock-servers/schemas needs creator+.
-  const creatorOnly = (!hasUid && family === "collections") ||
+  // collection or workspace and touching apis/monitors/mock-servers/schemas
+  // needs creator+.
+  const creatorOnly = (!hasUid && (family === "collections" || family === "workspaces")) ||
     ["apis", "monitors", "mock-servers", "schemas"].includes(family);
   return creatorOnly
     ? [ROLE_RANK.creator, "This action requires the creator role or above"]
@@ -407,51 +418,132 @@ function stripCurrentValues(value) {
 }
 
 // ---------------------------------------------------------------------------
-// the upstream (Postman) call
+// connected Postman accounts: keys added in the admin panel (encrypted with
+// SECRET_KEY, never returned by any endpoint), plus POSTMAN_API_KEY if set.
 
-function postmanBase(env) {
-  if (typeof env.POSTMAN_API_BASE === "string" && env.POSTMAN_API_BASE) {
-    return env.POSTMAN_API_BASE;
-  }
-  return env.POSTMAN_REGION === "eu" ? "https://api.eu.postman.com" : "https://api.postman.com";
+const ENV_ACCOUNT_ID = 0;
+const SECRET_PLACEHOLDER = "replace-with-at-least-32-random-characters";
+const KEY_AAD = new TextEncoder().encode("dispatch-postman-key");
+// A refused or rate-limited call did nothing upstream, so another key that can
+// reach the same workspace may still serve it.
+const TRY_NEXT_ACCOUNT = new Set([401, 403, 404, 429]);
+const WORKSPACE_SYNC_INTERVAL = 30_000;
+let lastWorkspaceSync = 0;
+
+function secretKeyOf(env) {
+  const secret = typeof env.SECRET_KEY === "string" ? env.SECRET_KEY.trim() : "";
+  return secret.length >= 32 && secret !== SECRET_PLACEHOLDER ? secret : null;
 }
 
-// Forward method + path + query + JSON body with the shared key. Postman's
-// status, body and rate-limit header come back verbatim.
-async function forwardToPostman(env, method, path, query, bodyJson) {
-  const key = env.POSTMAN_API_KEY;
-  if (key === undefined || key === null) {
-    return { kind: "error",
-      response: fail(503, "This server has no Postman API key — set POSTMAN_API_KEY in the server's environment and restart it") };
-  }
-  let url = `${postmanBase(env)}${path}`;
-  if (query) url += `?${query}`;
-  const init = {
-    method,
-    headers: { "X-Api-Key": key, Accept: "application/json" },
-    signal: AbortSignal.timeout(60000),
-  };
-  if (bodyJson !== null && bodyJson !== undefined) {
-    init.headers["Content-Type"] = "application/json";
-    init.body = JSON.stringify(bodyJson);
-  }
-  let resp;
+const toHex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, "0")).join("");
+const fromHex = (s) => Uint8Array.from(s.match(/../g) || [], (h) => parseInt(h, 16));
+
+async function aesKey(secret) {
+  const raw = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+// Stored as v1.<hex iv>.<hex ciphertext+tag>; server/src/accounts.rs writes the
+// same format.
+async function encryptKey(secret, plain) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const out = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: KEY_AAD },
+    await aesKey(secret), new TextEncoder().encode(plain));
+  return `v1.${toHex(iv)}.${toHex(new Uint8Array(out))}`;
+}
+
+async function decryptKey(secret, stored) {
+  const [version, iv, data] = String(stored || "").split(".");
+  if (version !== "v1" || !iv || !data) return null;
   try {
-    resp = await fetch(url, init);
+    const out = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromHex(iv), additionalData: KEY_AAD },
+      await aesKey(secret), fromHex(data));
+    return new TextDecoder().decode(out);
   } catch {
-    return { kind: "error",
-      response: fail(502, "Couldn't reach the Postman API. Check the server's internet connection.") };
+    return null;
   }
-  const text = await resp.text();
-  const parsed = parseJson(text);
-  return {
-    kind: "upstream",
-    status: resp.status,
-    rate: resp.headers.get(RATE_LIMIT_HEADER),
-    contentType: resp.headers.get("Content-Type") || "application/json",
-    text,
-    value: parsed.ok ? parsed.value : null,
-  };
+}
+
+function postmanBase(env, region) {
+  if (typeof env.POSTMAN_API_BASE === "string" && env.POSTMAN_API_BASE) {
+    return env.POSTMAN_API_BASE.replace(/\/+$/, "");
+  }
+  return region === "eu" ? "https://api.eu.postman.com" : "https://api.postman.com";
+}
+
+function envAccountKey(env) {
+  return typeof env.POSTMAN_API_KEY === "string" ? env.POSTMAN_API_KEY.trim() : "";
+}
+
+function envCred(env) {
+  const key = envAccountKey(env);
+  return key
+    ? { id: ENV_ACCOUNT_ID, label: "Server environment key", key, base: postmanBase(env, env.POSTMAN_REGION) }
+    : null;
+}
+
+// Every account the server can currently use. A key that can't be decrypted
+// (SECRET_KEY changed or missing) is left out and reported in the admin panel.
+async function connectedAccounts(env) {
+  const creds = [];
+  const fromEnv = envCred(env);
+  if (fromEnv) creds.push(fromEnv);
+  const rows = await dbAll(env, "SELECT id, label, region, key_ciphertext FROM postman_accounts ORDER BY id")
+    .catch(() => []);
+  const secret = secretKeyOf(env);
+  if (!secret) return creds;
+  for (const row of rows) {
+    const key = await decryptKey(secret, row.key_ciphertext);
+    if (key) creds.push({ id: row.id, label: row.label, key, base: postmanBase(env, row.region) });
+  }
+  return creds;
+}
+
+// ---------------------------------------------------------------------------
+// the upstream (Postman) call
+
+// Forward method + path + query + JSON body, trying each account in turn while
+// the upstream refuses. Postman's status, body and rate-limit header come back
+// verbatim from the last account tried.
+async function forwardToPostman(creds, method, path, query, bodyJson) {
+  if (creds.length === 0) {
+    return { kind: "error", response: fail(404, "No connected Postman account can reach this workspace") };
+  }
+  let last = null;
+  for (let i = 0; i < creds.length; i += 1) {
+    let url = `${creds[i].base}${path}`;
+    if (query) url += `?${query}`;
+    const init = {
+      method,
+      headers: { "X-Api-Key": creds[i].key, Accept: "application/json" },
+      signal: AbortSignal.timeout(60000),
+    };
+    if (bodyJson !== null && bodyJson !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(bodyJson);
+    }
+    let resp;
+    try {
+      resp = await fetch(url, init);
+    } catch {
+      last = { kind: "error",
+        response: fail(502, "Couldn't reach the Postman API. Check the server's internet connection.") };
+      continue;
+    }
+    const text = await resp.text();
+    const parsed = parseJson(text);
+    last = {
+      kind: "upstream",
+      status: resp.status,
+      rate: resp.headers.get(RATE_LIMIT_HEADER),
+      contentType: resp.headers.get("Content-Type") || "application/json",
+      text,
+      value: parsed.ok ? parsed.value : null,
+      account: creds[i],
+    };
+    if (!TRY_NEXT_ACCOUNT.has(resp.status)) return last;
+  }
+  return last;
 }
 
 // A live upstream response passed through verbatim (status, body,
@@ -472,18 +564,89 @@ function upstreamIsSuccess(upstream) {
 }
 
 // ---------------------------------------------------------------------------
+// workspace → account routing
+
+// Asks every account for its workspaces. An unfiltered list replaces what's
+// remembered for that account, so workspaces created in or removed from Postman
+// are picked up.
+async function syncWorkspaces(env, creds, query = "") {
+  const results = await Promise.all(creds.map(async (cred) => ({
+    cred, upstream: await forwardToPostman([cred], "GET", "/workspaces", query, null),
+  })));
+  if (query) return results;
+  lastWorkspaceSync = Date.now();
+  for (const { cred, upstream } of results) {
+    if (!upstreamIsSuccess(upstream) || !Array.isArray(upstream.value?.workspaces)) continue;
+    const statements = [env.DB.prepare("DELETE FROM workspace_accounts WHERE account_id = ?").bind(cred.id)];
+    for (const ws of upstream.value.workspaces) {
+      if (!ws || typeof ws.id !== "string") continue;
+      statements.push(env.DB.prepare(
+        "INSERT OR REPLACE INTO workspace_accounts (workspace_id, account_id, name, type) VALUES (?, ?, ?, ?)",
+      ).bind(ws.id, cred.id, String(ws.name ?? ws.id), String(ws.type ?? "")));
+    }
+    await env.DB.batch(statements).catch(() => {});
+  }
+  return results;
+}
+
+// The accounts that can reach a workspace. An unknown id triggers one throttled
+// refresh, since it may have been created in Postman moments ago.
+async function workspaceCreds(env, creds, workspace) {
+  const lookup = async () => {
+    const rows = await dbAll(env, "SELECT account_id FROM workspace_accounts WHERE workspace_id = ?", [workspace])
+      .catch(() => []);
+    const ids = new Set(rows.map((row) => row.account_id));
+    return creds.filter((cred) => ids.has(cred.id));
+  };
+  const found = await lookup();
+  if (found.length || Date.now() - lastWorkspaceSync < WORKSPACE_SYNC_INTERVAL) return found;
+  await syncWorkspaces(env, creds);
+  return lookup();
+}
+
+// The merged workspace list. One account failing doesn't hide the others; two
+// accounts seeing the same workspace show it once. Different workspaces sharing
+// a name (every account has a "My Workspace") get the account's label added.
+async function mergedWorkspaces(env, creds, query, allowed) {
+  const results = await syncWorkspaces(env, creds, query);
+  const merged = new Map();
+  let failure = null;
+  let rate = null;
+  let first = null;
+  for (const { cred, upstream } of results) {
+    if (!upstreamIsSuccess(upstream) || !Array.isArray(upstream.value?.workspaces)) {
+      failure = failure || upstream;
+      continue;
+    }
+    first = first || upstream.value;
+    rate = upstream.rate;
+    for (const ws of upstream.value.workspaces) {
+      if (!ws || (allowed && !allowed.includes(ws.id)) || merged.has(ws.id)) continue;
+      merged.set(ws.id, { ws, label: cred.label });
+    }
+  }
+  if (!first) return failure.kind === "error" ? failure.response : upstreamResponse(failure);
+  const nameCounts = new Map();
+  for (const { ws } of merged.values()) nameCounts.set(ws.name, (nameCounts.get(ws.name) || 0) + 1);
+  const workspaces = [...merged.values()].map(({ ws, label }) =>
+    nameCounts.get(ws.name) > 1 ? { ...ws, name: `${ws.name} (${label})` } : ws);
+  return jsonOut(200, { ...first, workspaces }, rate);
+}
+
+// ---------------------------------------------------------------------------
 // proxy internals
 
 // Per-workspace list fetch: answers from the 60s cache when fresh; on a
 // cache miss calls upstream, then populates cache and the uid map.
-async function cachedWorkspaceList(env, family, query, workspace, cacheScope) {
+async function cachedWorkspaceList(env, creds, family, query, workspace, cacheScope) {
   const { base, table, listKey, thing } = dialect(family);
   const cacheKey = `${cacheScope}|${base}|${workspace}`;
   const cached = listCache.get(cacheKey);
   if (cached && Date.now() - cached.at < LIST_CACHE_TTL) {
     return { kind: "cached", status: 200, rate: cached.rate, value: cached.value };
   }
-  const upstream = await forwardToPostman(env, "GET", base, queryWithWorkspace(query, workspace), null);
+  const route = await workspaceCreds(env, creds, workspace);
+  const upstream = await forwardToPostman(route, "GET", base, queryWithWorkspace(query, workspace), null);
   if (upstream.kind === "error") return upstream;
   if (upstreamIsSuccess(upstream) && upstream.value) {
     const entries = listEntries(upstream.value, listKey, thing);
@@ -493,18 +656,23 @@ async function cachedWorkspaceList(env, family, query, workspace, cacheScope) {
   return upstream;
 }
 
-// Merges the per-workspace list responses of every granted workspace into
-// one list; a failing workspace's upstream status/body passes through
-// verbatim (failures are never cached).
-async function mergedLists(env, family, allowed, cacheScope) {
+// Merges the per-workspace list responses of every granted workspace into one
+// list. A workspace that fails is skipped while another succeeded, so one
+// revoked key doesn't hide everything; failures are never cached.
+async function mergedLists(env, creds, family, allowed, cacheScope) {
   const { listKey, thing } = dialect(family);
   const merged = [];
   let rate = null;
   let responseKey = listKey;
+  let succeeded = false;
+  let failure = null;
   for (const workspace of allowed) {
-    const upstream = await cachedWorkspaceList(env, family, "", workspace, cacheScope);
-    if (upstream.kind === "error") return upstream.response;
-    if (!upstreamIsSuccess(upstream) && upstream.kind !== "cached") return upstreamResponse(upstream);
+    const upstream = await cachedWorkspaceList(env, creds, family, "", workspace, cacheScope);
+    if (upstream.kind === "error" || (!upstreamIsSuccess(upstream) && upstream.kind !== "cached")) {
+      failure = failure || upstream;
+      continue;
+    }
+    succeeded = true;
     if (upstream.value && typeof upstream.value === "object") {
       const hit = Object.keys(upstream.value).find((k) => k === listKey || k === thing);
       if (hit) responseKey = hit;
@@ -513,38 +681,40 @@ async function mergedLists(env, family, allowed, cacheScope) {
     if (entries) merged.push(...entries);
     rate = upstream.rate;
   }
+  if (!succeeded && failure) return failure.kind === "error" ? failure.response : upstreamResponse(failure);
   return jsonOut(200, { [responseKey]: merged }, rate);
 }
 
 // GET on the list endpoint with grants: an explicitly requested workspace is
 // served from cache/upstream if granted; otherwise every granted workspace's
 // lists are fetched (60s cached) and merged.
-async function listScoped(env, family, query, allowed, cacheScope) {
+async function listScoped(env, creds, family, query, allowed, cacheScope) {
   const { listKey } = dialect(family);
   if (allowed.length === 0) return jsonOut(200, { [listKey]: [] });
   const requested = queryWorkspace(query);
   if (requested && allowed.includes(requested)) {
-    const upstream = await cachedWorkspaceList(env, family, query, requested, cacheScope);
+    const upstream = await cachedWorkspaceList(env, creds, family, query, requested, cacheScope);
     if (upstream.kind === "error") return upstream.response;
     if (upstream.kind === "cached") return jsonOut(200, upstream.value, upstream.rate);
     return upstreamResponse(upstream);
   }
   if (requested) return fail(403, "This workspace isn't in one of your workspaces");
-  return mergedLists(env, family, allowed, cacheScope);
+  return mergedLists(env, creds, family, allowed, cacheScope);
 }
 
 // POST /collections or /environments with grants: force the workspace in the
 // body to an allowed one (defaulting to the first), keep the query param in
 // sync for clients that carry the workspace there, and cache the mapping
 // from the create response.
-async function createScoped(env, family, query, bodyJson, allowed) {
+async function createScoped(env, creds, family, query, bodyJson, allowed) {
   const { table, listKey, thing, base } = dialect(family);
   if (allowed.length === 0) return fail(403, "You have no granted workspaces");
   if (bodyJson === null || typeof bodyJson !== "object") return fail(400, "Body must be valid JSON");
   const existing = findWorkspaceIn(bodyJson, query);
   const chosen = existing !== null && allowed.includes(existing) ? existing : allowed[0];
   forceWorkspaceInBody(bodyJson, chosen);
-  const upstream = await forwardToPostman(env, "POST", base, queryWithWorkspace(query, chosen), bodyJson);
+  const route = await workspaceCreds(env, creds, chosen);
+  const upstream = await forwardToPostman(route, "POST", base, queryWithWorkspace(query, chosen), bodyJson);
   if (upstream.kind === "error") return upstream.response;
   if (upstreamIsSuccess(upstream) && upstream.value) {
     const entries = listEntries(upstream.value, listKey, thing);
@@ -553,9 +723,44 @@ async function createScoped(env, family, query, bodyJson, allowed) {
   return upstreamResponse(upstream);
 }
 
+// A list with no workspace named, for a principal with no grants to scope by:
+// every account's list, each collection or environment once.
+async function mergedAcrossAccounts(creds, family, query) {
+  const { base, listKey } = dialect(family);
+  const seen = new Map();
+  let failure = null;
+  let succeeded = false;
+  let rate = null;
+  for (const cred of creds) {
+    const upstream = await forwardToPostman([cred], "GET", base, query, null);
+    if (!upstreamIsSuccess(upstream)) {
+      failure = failure || upstream;
+      continue;
+    }
+    succeeded = true;
+    rate = upstream.rate;
+    for (const entry of upstream.value?.[listKey] || []) {
+      seen.set(entry.uid || entry.id, entry);
+    }
+  }
+  if (!succeeded) return failure.kind === "error" ? failure.response : upstreamResponse(failure);
+  return jsonOut(200, { [listKey]: [...seen.values()] }, rate);
+}
+
+// Which accounts to try for one collection or environment: the owning
+// workspace's when known, else any account (only reachable by principals with
+// no grants to scope by; granted ones must have the uid mapped).
+async function credsForUid(env, creds, table, rest) {
+  const uid = percentDecode(rest.split("/")[0]);
+  const row = await dbFirst(env, `SELECT workspace_id FROM ${table} WHERE uid = ?`, [uid]).catch(() => null);
+  if (!row) return creds;
+  const route = await workspaceCreds(env, creds, row.workspace_id);
+  return route.length ? route : creds;
+}
+
 // Unscoped passthrough. Maintains the uid→workspace map from per-workspace
 // lists, creates and deletes; redacts viewers' single-item GETs.
-async function plainForward(env, family, method, rest, query, bodyJson, bodyText, principal) {
+async function plainForward(env, creds, family, method, rest, query, bodyJson, bodyText, principal) {
   const { table, listKey, thing, base } = dialect(family);
   const isList = rest === "";
   const isCreate = isList && method === "POST";
@@ -564,7 +769,22 @@ async function plainForward(env, family, method, rest, query, bodyJson, bodyText
     ? (bodyJson ? findWorkspaceIn(bodyJson, query) : queryWorkspace(query))
     : isList ? queryWorkspace(query) : null;
 
-  const upstream = await forwardToPostman(env, method, rest === "" ? base : `${base}/${rest}`, query,
+  if (isList && !isCreate && !declaredWorkspace && creds.length > 1) {
+    return mergedAcrossAccounts(creds, family, query);
+  }
+  let route;
+  if (declaredWorkspace) {
+    route = await workspaceCreds(env, creds, declaredWorkspace);
+    if (route.length === 0) route = creds;
+  } else if (isCreate) {
+    route = creds.slice(0, 1);
+  } else if (isList) {
+    route = creds;
+  } else {
+    route = await credsForUid(env, creds, table, rest);
+  }
+
+  const upstream = await forwardToPostman(route, method, rest === "" ? base : `${base}/${rest}`, query,
     bodyText.trim() === "" ? null : bodyJson);
   if (upstream.kind === "error") return upstream.response;
 
@@ -585,9 +805,9 @@ async function plainForward(env, family, method, rest, query, bodyJson, bodyText
 
 // Allowed single-uid call inside a granted workspace: forward verbatim, keep
 // the map in sync on deletes, redact viewers.
-async function forwardSingle(env, family, method, rest, query, bodyJson, bodyText, principal) {
+async function forwardSingle(env, route, family, method, rest, query, bodyJson, bodyText, principal) {
   const { table, base } = dialect(family);
-  const upstream = await forwardToPostman(env, method, `${base}/${rest}`, query,
+  const upstream = await forwardToPostman(route, method, `${base}/${rest}`, query,
     bodyText.trim() === "" ? null : bodyJson);
   if (upstream.kind === "error") return upstream.response;
   if (upstreamIsSuccess(upstream) && method === "DELETE") {
@@ -600,29 +820,43 @@ async function forwardSingle(env, family, method, rest, query, bodyJson, bodyTex
   return upstreamResponse(upstream);
 }
 
-// The GET /workspaces list with grants: forward, then filter to allowed ids;
-// any other workspaces call is only allowed if the uid is granted.
-async function workspacesScoped(env, method, rest, query, bodyJson, bodyText, allowed) {
-  if (rest !== "") {
-    const uid = percentDecode(rest.split("/")[0]);
-    if (!allowed.includes(uid)) return fail(403, "This workspace isn't in one of your workspaces");
-  } else if (method === "GET" || method === "HEAD") {
-    const upstream = await forwardToPostman(env, method, "/workspaces", query,
-      bodyText.trim() === "" ? null : bodyJson);
-    if (upstream.kind === "error") return upstream.response;
-    if (upstreamIsSuccess(upstream) && upstream.value) {
-      const filtered = filterWorkspaces(upstream.value, allowed);
-      if (filtered) return jsonOut(upstream.status, filtered, upstream.rate);
-    }
-    return upstreamResponse(upstream);
+// /workspaces: the list is merged across accounts and filtered to the grants;
+// anything aimed at one workspace goes through the accounts that can reach it.
+async function workspacesRoute(env, creds, method, rest, query, bodyJson, bodyText, allowed) {
+  const body = bodyText.trim() === "" ? null : bodyJson;
+  if (rest === "") {
+    if (method === "GET" || method === "HEAD") return mergedWorkspaces(env, creds, query, allowed);
+    if (allowed !== null) return fail(403, "Only people with access to all workspaces can create one");
+    return passthrough(creds.slice(0, 1), method, "/workspaces", query, body);
   }
-  return passthrough(env, method, rest === "" ? "/workspaces" : `/workspaces/${rest}`, query,
-    bodyText.trim() === "" ? null : bodyJson);
+  const uid = percentDecode(rest.split("/")[0]);
+  if (allowed !== null && !allowed.includes(uid)) {
+    return fail(403, "This workspace isn't in one of your workspaces");
+  }
+  const route = await workspaceCreds(env, creds, uid);
+  if (route.length === 0 && allowed !== null) return fail(404, "No connected Postman account can reach this workspace");
+  return passthrough(route.length ? route : creds, method, `/workspaces/${rest}`, query, body);
 }
 
-async function passthrough(env, method, path, query, bodyJson) {
-  const upstream = await forwardToPostman(env, method, path, query, bodyJson);
+async function passthrough(creds, method, path, query, bodyJson) {
+  const upstream = await forwardToPostman(creds, method, path, query, bodyJson);
   return upstream.kind === "error" ? upstream.response : upstreamResponse(upstream);
+}
+
+// /apis, /monitors, /mock-servers and /schemas don't belong to a workspace we
+// can check, unless the caller names one. Without it, someone limited to certain
+// workspaces is refused rather than shown the whole account.
+async function unscopedFamilyRoute(env, creds, family, method, rest, query, bodyJson, bodyText, allowed) {
+  const base = `/${family}`;
+  const workspace = queryWorkspace(query);
+  const body = bodyText.trim() === "" ? null : bodyJson;
+  const path = rest === "" ? base : `${base}/${rest}`;
+  if (allowed !== null && (!workspace || !allowed.includes(workspace))) {
+    return fail(403, "This isn't available to people limited to certain workspaces");
+  }
+  if (!workspace) return passthrough(creds, method, path, query, body);
+  const route = await workspaceCreds(env, creds, workspace);
+  return passthrough(route.length ? route : creds, method, path, query, body);
 }
 
 // Cache keys are per principal grant.
@@ -662,14 +896,14 @@ async function proxy(env, request, requireAuth) {
   if (!found) return audited(fail(404, "No such Postman endpoint"));
   const { family, rest } = found;
 
-  // 3. The shared API key is a server-side prerequisite for proxying.
-  if (env.POSTMAN_API_KEY === undefined || env.POSTMAN_API_KEY === null) {
-    return audited(fail(503,
-      "This server has no Postman API key — set POSTMAN_API_KEY in the server's environment and restart it"));
+  // 3. A connected Postman account is a server-side prerequisite for proxying.
+  const creds = await connectedAccounts(env);
+  if (creds.length === 0) {
+    return audited(fail(503, NO_ACCOUNT_MESSAGE));
   }
 
   // 4. Role matrix.
-  const [needed, neededMsg] = minRole(family, method, rest !== "");
+  const [needed, neededMsg] = minRole(family, method, rest);
   if (rankOf(principal) < needed) {
     const message = rankOf(principal) === ROLE_RANK.viewer
       ? "Viewers have read-only access"
@@ -691,9 +925,9 @@ async function proxy(env, request, requireAuth) {
     const isList = rest === "";
     const cacheScope = cacheScopeOf(principal);
     if (allowed !== null && isList && method === "POST") {
-      response = await createScoped(env, family, query, bodyJson, allowed);
+      response = await createScoped(env, creds, family, query, bodyJson, allowed);
     } else if (allowed !== null && isList) {
-      response = await listScoped(env, family, query, allowed, cacheScope);
+      response = await listScoped(env, creds, family, query, allowed, cacheScope);
     } else if (allowed !== null) {
       // Single-uid operation: the owning workspace comes from the uid map,
       // never from the request.
@@ -701,25 +935,24 @@ async function proxy(env, request, requireAuth) {
       const mappedRow = await dbFirst(env, `SELECT workspace_id FROM ${table} WHERE uid = ?`, [uid])
         .catch(() => null);
       if (mappedRow && allowed.includes(mappedRow.workspace_id)) {
-        response = await forwardSingle(env, family, method, rest, query, bodyJson, bodyText, principal);
+        const route = await workspaceCreds(env, creds, mappedRow.workspace_id);
+        response = await forwardSingle(env, route, family, method, rest, query, bodyJson, bodyText, principal);
       } else {
         response = fail(403,
           `This ${thing} isn't in one of your workspaces — refresh your ${thing}s list first`);
       }
     } else {
-      response = await plainForward(env, family, method, rest, query, bodyJson, bodyText, principal);
+      response = await plainForward(env, creds, family, method, rest, query, bodyJson, bodyText, principal);
     }
   } else if (family === "workspaces") {
-    if (allowed !== null) {
-      response = await workspacesScoped(env, method, rest, query, bodyJson, bodyText, allowed);
-    } else {
-      response = await passthrough(env, method, rest === "" ? "/workspaces" : `/workspaces/${rest}`,
-        query, bodyText.trim() === "" ? null : bodyJson);
-    }
-  } else {
+    response = await workspacesRoute(env, creds, method, rest, query, bodyJson, bodyText, allowed);
+  } else if (family === "scim" || family === "integrations") {
+    // Admin-only by the role matrix. These act on a whole Postman team.
     const base = `/${family}`;
-    response = await passthrough(env, method, rest === "" ? base : `${base}/${rest}`, query,
+    response = await passthrough(creds, method, rest === "" ? base : `${base}/${rest}`, query,
       bodyText.trim() === "" ? null : bodyJson);
+  } else {
+    response = await unscopedFamilyRoute(env, creds, family, method, rest, query, bodyJson, bodyText, allowed);
   }
   return audited(response);
 }
@@ -750,12 +983,15 @@ async function handleRegister(env, request, requireAuth) {
   try {
     const firstUser = (await dbFirst(env, "SELECT COUNT(*) AS n FROM users")).n === 0;
     role = firstUser ? "admin" : "viewer";
+    // Nobody but the first admin reaches a workspace until an admin grants it.
+    const grants = firstUser ? null : [];
+    const grantSlot = firstUser ? "NULL" : "'[]'";
     const result = await dbRun(env,
-      "INSERT INTO users (email, password_hash, role, workspace_grants, created_at) VALUES (?, ?, ?, NULL, ?)",
+      `INSERT INTO users (email, password_hash, role, workspace_grants, created_at) VALUES (?, ?, ?, ${grantSlot}, ?)`,
       [email, hash, role, nowIso()]);
     const [username, fullName] = displayNames(email);
     return jsonOut(201, {
-      user: { id: result.meta.last_row_id, username, fullName, email, role, workspace_grants: null },
+      user: { id: result.meta.last_row_id, username, fullName, email, role, workspace_grants: grants },
     });
   } catch (e) {
     const msg = String((e && e.message) || e);
@@ -867,7 +1103,8 @@ async function handleAdminUsersCreate(env, request, requireAuth) {
   if (typeof role !== "string" || !ROLES.includes(role)) {
     return fail(400, "Role must be one of viewer, editor, creator or admin");
   }
-  const grants = grantsText(parsed.workspace_grants);
+  // No access until granted, unless the request asks for all workspaces (null).
+  const grants = grantsText(parsed.workspace_grants === undefined ? [] : parsed.workspace_grants);
   if (!grants.ok) return fail(400, grants.error);
   const hash = await hashPassword(password, env);
   let id;
@@ -993,6 +1230,238 @@ async function handleAdminAudit(env, request, requireAuth, query) {
 }
 
 // ---------------------------------------------------------------------------
+// admin API: connected Postman accounts and the workspaces they reach
+
+const POSTMAN_KEY_MAX = 512;
+const NO_SECRET_MESSAGE = "This server has no SECRET_KEY, so it can't store Postman keys. Set a SECRET_KEY secret of at least 32 random characters, then try again.";
+
+function keyHint(key) {
+  return `…${key.slice(-4)}`;
+}
+
+function cleanKey(value) {
+  const key = typeof value === "string" ? value.trim() : "";
+  return key && key.length <= POSTMAN_KEY_MAX && /^[\x21-\x7e]+$/.test(key) ? key : null;
+}
+
+function regionOf(value) {
+  if (value === undefined || value === null) return "us";
+  return value === "us" || value === "eu" ? value : null;
+}
+
+function cleanLabel(value) {
+  return typeof value === "string" ? value.trim().slice(0, 80) : "";
+}
+
+// Who a key belongs to, from Postman's own GET /me.
+async function identifyKey(cred) {
+  const upstream = await forwardToPostman([cred], "GET", "/me", "", null);
+  if (upstream.kind === "error") return { status: "unreachable" };
+  if (upstream.status === 401 || upstream.status === 403) return { status: "invalid" };
+  if (!upstreamIsSuccess(upstream)) return { status: "unreachable" };
+  const user = upstream.value?.user || {};
+  const usage = Array.isArray(upstream.value?.operations)
+    ? upstream.value.operations.find((op) => op && op.name === "api_usage")
+    : null;
+  return {
+    status: "ok",
+    userId: user.id === undefined || user.id === null ? null : String(user.id),
+    name: user.teamName || user.fullName || user.username || null,
+    usage: usage && Number.isFinite(usage.usage) && Number.isFinite(usage.limit)
+      ? { used: usage.usage, limit: usage.limit }
+      : null,
+  };
+}
+
+function storedAccountCred(env, row, key) {
+  return { id: row.id, label: row.label, key, base: postmanBase(env, row.region) };
+}
+
+async function accountView(env, base, cred, workspaceCount) {
+  const check = cred ? await identifyKey(cred) : { status: "undecryptable" };
+  return {
+    ...base,
+    postman_name: check.name || base.postman_name || null,
+    status: check.status,
+    usage: check.usage || null,
+    workspace_count: workspaceCount,
+  };
+}
+
+const ACCOUNT_COLS = "id, label, region, key_hint, postman_user_id, postman_name, created_by, created_at";
+
+function storedAccountJson(row) {
+  return {
+    id: row.id,
+    label: row.label,
+    region: row.region,
+    key_hint: row.key_hint,
+    source: "stored",
+    postman_name: row.postman_name,
+    created_by: row.created_by,
+    created_at: row.created_at,
+  };
+}
+
+async function workspaceCountOf(env, accountId) {
+  const row = await dbFirst(env, "SELECT COUNT(*) AS n FROM workspace_accounts WHERE account_id = ?", [accountId])
+    .catch(() => null);
+  return row ? row.n : 0;
+}
+
+async function handleAdminAccountsList(env, request, requireAuth) {
+  const { error } = await requireAdmin(env, request, requireAuth);
+  if (error) return error;
+  const creds = await connectedAccounts(env);
+  await syncWorkspaces(env, creds);
+  const accounts = [];
+  const fromEnv = envCred(env);
+  if (fromEnv) {
+    accounts.push(await accountView(env, {
+      id: ENV_ACCOUNT_ID, label: fromEnv.label, region: env.POSTMAN_REGION === "eu" ? "eu" : "us",
+      key_hint: keyHint(fromEnv.key), source: "environment", created_by: null, created_at: null,
+    }, fromEnv, await workspaceCountOf(env, ENV_ACCOUNT_ID)));
+  }
+  const rows = await dbAll(env, `SELECT ${ACCOUNT_COLS} FROM postman_accounts ORDER BY id`);
+  for (const row of rows) {
+    const cred = creds.find((c) => c.id === row.id) || null;
+    accounts.push(await accountView(env, storedAccountJson(row), cred, await workspaceCountOf(env, row.id)));
+  }
+  return jsonOut(200, { accounts, can_store_keys: secretKeyOf(env) !== null });
+}
+
+async function handleAdminAccountsCreate(env, request, requireAuth) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  if (error) return error;
+  const finish = async (resp) => {
+    await auditInsert(env, principal.userId, principal.email, "POST", "/admin/postman-accounts", resp.status, "account_add");
+    return resp;
+  };
+  const secret = secretKeyOf(env);
+  if (!secret) return finish(fail(503, NO_SECRET_MESSAGE));
+  const parsed = await readJsonObject(request);
+  if (!parsed) return finish(fail(400, "Body must be valid JSON"));
+  const key = cleanKey(parsed.api_key);
+  if (!key) return finish(fail(400, "Paste a Postman API key"));
+  const region = regionOf(parsed.region);
+  if (!region) return finish(fail(400, "Region must be us or eu"));
+  const probe = { id: -1, label: "", key, base: postmanBase(env, region) };
+  const check = await identifyKey(probe);
+  if (check.status === "invalid") return finish(fail(400, "Postman didn't accept this key. Check the key and its region."));
+  if (check.status !== "ok") return finish(fail(502, "Couldn't reach the Postman API to check this key. Try again."));
+  if (check.userId) {
+    const twin = await dbFirst(env, "SELECT label FROM postman_accounts WHERE postman_user_id = ?", [check.userId]).catch(() => null);
+    if (twin) return finish(fail(409, `This Postman user is already connected as "${twin.label}"`));
+  }
+  const label = cleanLabel(parsed.label) || check.name || `Postman account ${keyHint(key)}`;
+  const nameSlot = check.name ? "?" : "NULL";
+  const userSlot = check.userId ? "?" : "NULL";
+  const creatorSlot = principal.email ? "?" : "NULL";
+  const args = [label, region, await encryptKey(secret, key), keyHint(key)];
+  if (check.userId) args.push(check.userId);
+  if (check.name) args.push(check.name);
+  if (principal.email) args.push(principal.email);
+  args.push(nowIso());
+  const result = await dbRun(env,
+    `INSERT INTO postman_accounts (label, region, key_ciphertext, key_hint, postman_user_id, postman_name, created_by, created_at) VALUES (?, ?, ?, ?, ${userSlot}, ${nameSlot}, ${creatorSlot}, ?)`,
+    args);
+  listCache.clear();
+  const row = await dbFirst(env, `SELECT ${ACCOUNT_COLS} FROM postman_accounts WHERE id = ?`, [result.meta.last_row_id]);
+  const cred = storedAccountCred(env, row, key);
+  await syncWorkspaces(env, [cred]);
+  return finish(jsonOut(201, {
+    ...storedAccountJson(row), status: "ok", usage: check.usage || null,
+    workspace_count: await workspaceCountOf(env, row.id),
+  }));
+}
+
+async function handleAdminAccountsUpdate(env, request, requireAuth, idText) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  if (error) return error;
+  const path = `/admin/postman-accounts/${idText}`;
+  const finish = async (resp) => {
+    await auditInsert(env, principal.userId, principal.email, "PATCH", path, resp.status, "account_update");
+    return resp;
+  };
+  const id = /^\d+$/.test(idText) ? Number(idText) : null;
+  if (id === null) return finish(fail(404, "No such Postman account"));
+  if (id === ENV_ACCOUNT_ID) return finish(fail(400, "This key comes from the server's POSTMAN_API_KEY setting. Change it there."));
+  const parsed = await readJsonObject(request);
+  if (!parsed) return finish(fail(400, "Body must be valid JSON"));
+  const row = await dbFirst(env, `SELECT ${ACCOUNT_COLS} FROM postman_accounts WHERE id = ?`, [id]);
+  if (!row) return finish(fail(404, "No such Postman account"));
+  if (parsed.label !== undefined) {
+    const label = cleanLabel(parsed.label);
+    if (!label) return finish(fail(400, "Give the account a name"));
+    await dbRun(env, "UPDATE postman_accounts SET label = ? WHERE id = ?", [label, id]);
+  }
+  let replaced = null;
+  if (parsed.api_key !== undefined) {
+    const secret = secretKeyOf(env);
+    if (!secret) return finish(fail(503, NO_SECRET_MESSAGE));
+    const key = cleanKey(parsed.api_key);
+    if (!key) return finish(fail(400, "Paste a Postman API key"));
+    const check = await identifyKey({ id, label: row.label, key, base: postmanBase(env, row.region) });
+    if (check.status === "invalid") return finish(fail(400, "Postman didn't accept this key. Check the key and its region."));
+    if (check.status !== "ok") return finish(fail(502, "Couldn't reach the Postman API to check this key. Try again."));
+    await dbRun(env, "UPDATE postman_accounts SET key_ciphertext = ?, key_hint = ? WHERE id = ?",
+      [await encryptKey(secret, key), keyHint(key), id]);
+    if (check.userId) await dbRun(env, "UPDATE postman_accounts SET postman_user_id = ? WHERE id = ?", [check.userId, id]);
+    if (check.name) await dbRun(env, "UPDATE postman_accounts SET postman_name = ? WHERE id = ?", [check.name, id]);
+    replaced = key;
+  }
+  listCache.clear();
+  const updated = await dbFirst(env, `SELECT ${ACCOUNT_COLS} FROM postman_accounts WHERE id = ?`, [id]);
+  if (replaced) await syncWorkspaces(env, [storedAccountCred(env, updated, replaced)]);
+  const creds = await connectedAccounts(env);
+  return finish(jsonOut(200, await accountView(env, storedAccountJson(updated),
+    creds.find((c) => c.id === id) || null, await workspaceCountOf(env, id))));
+}
+
+async function handleAdminAccountsDelete(env, request, requireAuth, idText) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  if (error) return error;
+  const path = `/admin/postman-accounts/${idText}`;
+  const finish = async (resp) => {
+    await auditInsert(env, principal.userId, principal.email, "DELETE", path, resp.status, "account_remove");
+    return resp;
+  };
+  const id = /^\d+$/.test(idText) ? Number(idText) : null;
+  if (id === null) return finish(fail(404, "No such Postman account"));
+  if (id === ENV_ACCOUNT_ID) return finish(fail(400, "This key comes from the server's POSTMAN_API_KEY setting. Remove it there."));
+  const row = await dbFirst(env, "SELECT id FROM postman_accounts WHERE id = ?", [id]);
+  if (!row) return finish(fail(404, "No such Postman account"));
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM postman_accounts WHERE id = ?").bind(id),
+    env.DB.prepare("DELETE FROM workspace_accounts WHERE account_id = ?").bind(id),
+  ]);
+  listCache.clear();
+  return finish(responseWithCors(204));
+}
+
+// Every workspace any connected account reaches, each once, with the accounts
+// that reach it.
+async function handleAdminWorkspaces(env, request, requireAuth) {
+  const { error } = await requireAdmin(env, request, requireAuth);
+  if (error) return error;
+  const creds = await connectedAccounts(env);
+  const results = await syncWorkspaces(env, creds);
+  const failed = results.filter(({ upstream }) => !upstreamIsSuccess(upstream)).map(({ cred }) => cred.label);
+  const byId = new Map();
+  for (const { cred, upstream } of results) {
+    if (!upstreamIsSuccess(upstream)) continue;
+    for (const ws of upstream.value?.workspaces || []) {
+      if (!ws || typeof ws.id !== "string") continue;
+      const entry = byId.get(ws.id) || { id: ws.id, name: ws.name || ws.id, type: ws.type || "", accounts: [] };
+      entry.accounts.push({ id: cred.id, label: cred.label });
+      byId.set(ws.id, entry);
+    }
+  }
+  const workspaces = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return jsonOut(200, { workspaces, failed_accounts: failed });
+}
+
+// ---------------------------------------------------------------------------
 // the admin panel itself: served verbatim from ./admin via ASSETS.
 // GET /admin redirects so the panel's relative assets (./styles.css, ./app.js)
 // resolve against /admin/.
@@ -1032,6 +1501,8 @@ function ensureSchema(env) {
       `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS collections_map (uid TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT, updated_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS environments_map (uid TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT, updated_at TEXT)`,
+      `CREATE TABLE IF NOT EXISTS postman_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, region TEXT NOT NULL, key_ciphertext TEXT NOT NULL, key_hint TEXT NOT NULL, postman_user_id TEXT, postman_name TEXT, created_by TEXT, created_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS workspace_accounts (workspace_id TEXT NOT NULL, account_id INTEGER NOT NULL, name TEXT, type TEXT, PRIMARY KEY (workspace_id, account_id))`,
       `CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, user_id INTEGER, email TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status INTEGER NOT NULL)`,
     ];
     schemaReady = env.DB.batch(ddl.map((sql) => env.DB.prepare(sql)));
@@ -1054,8 +1525,9 @@ async function route(request, env) {
     if (path === "/admin/" || path.startsWith("/admin/")) {
     // Panel assets live at the assets root (index.html, app.js, …);
     // map /admin/ → "/" and /admin/<file> → "/<file>". The admin API paths
-    // (/admin/users, /admin/settings, /admin/audit) are handled below, not here.
-    const isAdminApi = /^\/admin\/(users|settings|audit)/.test(path);
+    // (/admin/users, /admin/postman-accounts, /admin/workspaces, /admin/settings,
+    // /admin/audit) are handled below, not here.
+    const isAdminApi = /^\/admin\/(users|postman-accounts|workspaces|settings|audit)/.test(path);
     if (!isAdminApi) return serveAdmin(env, request, path === "/admin/" ? "" : path.slice("/admin/".length));
     }
   }
@@ -1075,6 +1547,14 @@ async function route(request, env) {
     if (request.method === "PATCH") return handleAdminUsersUpdate(env, request, requireAuth, userMatch[1]);
     if (request.method === "DELETE") return handleAdminUsersDelete(env, request, requireAuth, userMatch[1]);
   }
+  if (path === "/admin/postman-accounts" && request.method === "GET") return handleAdminAccountsList(env, request, requireAuth);
+  if (path === "/admin/postman-accounts" && request.method === "POST") return handleAdminAccountsCreate(env, request, requireAuth);
+  const accountMatch = /^\/admin\/postman-accounts\/([^/]+)$/.exec(path);
+  if (accountMatch) {
+    if (request.method === "PATCH") return handleAdminAccountsUpdate(env, request, requireAuth, accountMatch[1]);
+    if (request.method === "DELETE") return handleAdminAccountsDelete(env, request, requireAuth, accountMatch[1]);
+  }
+  if (path === "/admin/workspaces" && request.method === "GET") return handleAdminWorkspaces(env, request, requireAuth);
   if (path === "/admin/settings") {
     if (request.method === "GET") return handleAdminSettingsGet(env, request, requireAuth);
     if (request.method === "PATCH") return handleAdminSettingsPatch(env, request, requireAuth);

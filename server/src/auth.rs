@@ -202,7 +202,9 @@ pub async fn register(State(state): State<Arc<AppState>>, body: Bytes) -> Respon
         let conn = lock_db(&state);
         let first_user = db::count_users(&conn).unwrap_or(1) == 0;
         let role = if first_user { "admin" } else { "viewer" };
-        match db::insert_user(&conn, email, &password_hash, role, None, &db::now_iso()) {
+        // Nobody but the first admin reaches a workspace until an admin grants it.
+        let grants = if first_user { None } else { Some("[]") };
+        match db::insert_user(&conn, email, &password_hash, role, grants, &db::now_iso()) {
             Ok(id) => Created::Yes(id, email.to_string(), role.to_string()),
             Err(rusqlite::Error::SqliteFailure(e, _))
                 if e.code == rusqlite::ErrorCode::ConstraintViolation =>

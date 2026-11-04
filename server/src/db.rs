@@ -16,6 +16,17 @@ pub struct UserRecord {
     pub created_at: String,
 }
 
+pub struct AccountRow {
+    pub id: i64,
+    pub label: String,
+    pub region: String,
+    pub key_ciphertext: String,
+    pub key_hint: String,
+    pub postman_name: Option<String>,
+    pub created_by: Option<String>,
+    pub created_at: String,
+}
+
 pub struct AuditRow {
     pub ts: String,
     pub user_id: Option<i64>,
@@ -68,6 +79,28 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             workspace_id TEXT NOT NULL,
             name TEXT,
             updated_at TEXT
+        );
+        -- Postman accounts an admin connected. key_ciphertext is AES-256-GCM under
+        -- SECRET_KEY; the plain key is never stored or returned.
+        CREATE TABLE IF NOT EXISTS postman_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            label TEXT NOT NULL,
+            region TEXT NOT NULL,
+            key_ciphertext TEXT NOT NULL,
+            key_hint TEXT NOT NULL,
+            postman_user_id TEXT,
+            postman_name TEXT,
+            created_by TEXT,
+            created_at TEXT NOT NULL
+        );
+        -- Which accounts reach which workspace, refreshed from Postman's own lists.
+        -- account_id 0 is the POSTMAN_API_KEY setting.
+        CREATE TABLE IF NOT EXISTS workspace_accounts (
+            workspace_id TEXT NOT NULL,
+            account_id INTEGER NOT NULL,
+            name TEXT,
+            type TEXT,
+            PRIMARY KEY (workspace_id, account_id)
         );
         CREATE TABLE IF NOT EXISTS audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -339,19 +372,138 @@ pub fn mapped_workspace(conn: &Connection, table: &str, uid: &str) -> Result<Opt
     .optional()
 }
 
+const ACCOUNT_COLS: &str =
+    "id, label, region, key_ciphertext, key_hint, postman_name, created_by, created_at";
+
+fn account_from_row(row: &rusqlite::Row) -> rusqlite::Result<AccountRow> {
+    Ok(AccountRow {
+        id: row.get(0)?,
+        label: row.get(1)?,
+        region: row.get(2)?,
+        key_ciphertext: row.get(3)?,
+        key_hint: row.get(4)?,
+        postman_name: row.get(5)?,
+        created_by: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
+
+pub fn list_accounts(conn: &Connection) -> Result<Vec<AccountRow>, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!("SELECT {ACCOUNT_COLS} FROM postman_accounts ORDER BY id"))?;
+    let rows = stmt.query_map([], account_from_row)?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn find_account(conn: &Connection, id: i64) -> Result<Option<AccountRow>, rusqlite::Error> {
+    conn.query_row(
+        &format!("SELECT {ACCOUNT_COLS} FROM postman_accounts WHERE id = ?1"),
+        params![id],
+        account_from_row,
+    )
+    .optional()
+}
+
+pub fn account_label_for_postman_user(conn: &Connection, user_id: &str) -> Result<Option<String>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT label FROM postman_accounts WHERE postman_user_id = ?1",
+        params![user_id],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_account(
+    conn: &Connection,
+    label: &str,
+    region: &str,
+    key_ciphertext: &str,
+    key_hint: &str,
+    postman_user_id: Option<&str>,
+    postman_name: Option<&str>,
+    created_by: Option<&str>,
+) -> Result<i64, rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO postman_accounts (label, region, key_ciphertext, key_hint, postman_user_id, postman_name, created_by, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![label, region, key_ciphertext, key_hint, postman_user_id, postman_name, created_by, now_iso()],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn set_account_label(conn: &Connection, id: i64, label: &str) -> Result<(), rusqlite::Error> {
+    conn.execute("UPDATE postman_accounts SET label = ?1 WHERE id = ?2", params![label, id])?;
+    Ok(())
+}
+
+pub fn set_account_key(
+    conn: &Connection,
+    id: i64,
+    key_ciphertext: &str,
+    key_hint: &str,
+    postman_user_id: Option<&str>,
+    postman_name: Option<&str>,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE postman_accounts SET key_ciphertext = ?1, key_hint = ?2, \
+         postman_user_id = COALESCE(?3, postman_user_id), postman_name = COALESCE(?4, postman_name) WHERE id = ?5",
+        params![key_ciphertext, key_hint, postman_user_id, postman_name, id],
+    )?;
+    Ok(())
+}
+
+pub fn delete_account(conn: &Connection, id: i64) -> Result<bool, rusqlite::Error> {
+    let deleted = conn.execute("DELETE FROM postman_accounts WHERE id = ?1", params![id])?;
+    conn.execute("DELETE FROM workspace_accounts WHERE account_id = ?1", params![id])?;
+    Ok(deleted > 0)
+}
+
+/// Replaces what's remembered about one account's workspaces: (id, name, type).
+pub fn replace_workspace_accounts(
+    conn: &Connection,
+    account_id: i64,
+    workspaces: &[(String, String, String)],
+) -> Result<(), rusqlite::Error> {
+    conn.execute("DELETE FROM workspace_accounts WHERE account_id = ?1", params![account_id])?;
+    for (id, name, kind) in workspaces {
+        conn.execute(
+            "INSERT OR REPLACE INTO workspace_accounts (workspace_id, account_id, name, type) VALUES (?1, ?2, ?3, ?4)",
+            params![id, account_id, name, kind],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn workspace_account_ids(conn: &Connection, workspace_id: &str) -> Result<Vec<i64>, rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT account_id FROM workspace_accounts WHERE workspace_id = ?1")?;
+    let rows = stmt
+        .query_map(params![workspace_id], |row| row.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
+    Ok(rows)
+}
+
+pub fn workspace_count(conn: &Connection, account_id: i64) -> Result<i64, rusqlite::Error> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM workspace_accounts WHERE account_id = ?1",
+        params![account_id],
+        |row| row.get(0),
+    )
+}
+
 pub fn audit_insert(
     conn: &Connection,
     ts: &str,
     user_id: Option<i64>,
     email: Option<&str>,
+    action: &str,
     method: &str,
     path: &str,
     status: i64,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT INTO audit (ts, user_id, email, action, method, path, status) \
-         VALUES (?1, ?2, ?3, 'proxy', ?4, ?5, ?6)",
-        params![ts, user_id, email, method, path, status],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![ts, user_id, email, action, method, path, status],
     )?;
     Ok(())
 }
