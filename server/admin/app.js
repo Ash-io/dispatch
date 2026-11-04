@@ -24,7 +24,23 @@
     meEmail: $("me-email"),
     meAvatar: $("me-avatar"),
     tabs: Array.from(document.querySelectorAll(".tab")),
-    panels: { users: $("tab-users"), settings: $("tab-settings"), audit: $("tab-audit") },
+    panels: { accounts: $("tab-accounts"), workspaces: $("tab-workspaces"), users: $("tab-users"), settings: $("tab-settings"), audit: $("tab-audit") },
+    accountsCount: $("accounts-count"),
+    accountsBody: $("accounts-body"),
+    accountsTable: $("accounts-table"),
+    accountsEmpty: $("accounts-empty"),
+    accountsFoot: $("accounts-foot"),
+    accountsRefresh: $("accounts-refresh"),
+    accountAdd: $("account-add"),
+    accountAddEmpty: $("account-add-empty"),
+    secretNotice: $("secret-notice"),
+    workspacesCount: $("workspaces-count"),
+    workspacesBody: $("workspaces-body"),
+    workspacesSearch: $("workspaces-search"),
+    workspacesRefresh: $("workspaces-refresh"),
+    workspacesFailed: $("workspaces-failed"),
+    workspacesFailedText: $("workspaces-failed-text"),
+    keyNoticeGo: $("key-notice-go"),
     addForm: $("add-user-form"),
     newEmail: $("new-email"),
     newPassword: $("new-password"),
@@ -61,7 +77,9 @@
   let toastTimer = null;
   let allUsers = [];
   let allAudit = [];
-  let workspaces = null; // [{ id, name }] once listed; null if Postman can't be reached
+  let workspaces = null; // [{ id, name, type, accounts }] once listed; null if that failed
+  let accounts = null; // connected Postman accounts once listed
+  let canStoreKeys = true;
 
   /* ---- session storage ---- */
 
@@ -234,13 +252,17 @@
     return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
   };
 
+  function workspaceName(id) {
+    const known = workspaces && workspaces.find((w) => w.id === id);
+    if (!known) return id;
+    const twins = workspaces.filter((w) => w.name === known.name).length;
+    return twins > 1 && known.accounts.length ? known.name + " (" + known.accounts[0].label + ")" : known.name;
+  }
+
   function grantsText(grants) {
     if (grants === null || grants === undefined) return "All workspaces";
     if (!grants.length) return "No workspaces";
-    const names = grants.map((id) => {
-      const known = workspaces && workspaces.find((w) => w.id === id);
-      return known ? known.name : id;
-    });
+    const names = grants.map(workspaceName);
     return names.length <= 2 ? names.join(", ") : names.length + " workspaces";
   }
 
@@ -268,6 +290,10 @@
     if (els.dialog.open) closeDialog(null);
     els.usersBody.textContent = "";
     els.auditBody.textContent = "";
+    els.accountsBody.textContent = "";
+    els.workspacesBody.textContent = "";
+    accounts = null;
+    workspaces = null;
     if (message !== undefined) showInlineLoginError(message);
     if (wasInApp) {
       els.loginPassword.value = "";
@@ -289,7 +315,9 @@
     }
     if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
     for (const key of Object.keys(els.panels)) els.panels[key].hidden = key !== name;
-    if (name === "users") loadUsers();
+    if (name === "accounts") loadAccounts();
+    else if (name === "workspaces") { loadUsers(); loadWorkspaces(); }
+    else if (name === "users") loadUsers();
     else if (name === "settings") loadSettings();
     else if (name === "audit") loadAudit();
   }
@@ -322,8 +350,9 @@
     els.meEmail.title = user.email || "";
     els.meAvatar.textContent = (user.email || "A").charAt(0).toUpperCase();
     showApp();
+    await loadAccounts();
     const start = location.hash.slice(1);
-    switchTab(els.panels[start] ? start : "users");
+    switchTab(els.panels[start] ? start : accounts && accounts.length ? "users" : "accounts");
     loadWorkspaces();
     refreshRegistration();
     return true;
@@ -404,16 +433,333 @@
     showLogin();
   });
 
+  /* ---- Postman accounts ---- */
+
+  const ACCOUNT_STATUS = {
+    ok: ["ok", "Connected"],
+    invalid: ["bad", "Key rejected"],
+    unreachable: ["warn", "Can't reach Postman"],
+    undecryptable: ["bad", "Can't read key"],
+  };
+
+  async function loadAccounts() {
+    if (!accounts) skeletonRows(els.accountsBody, 6);
+    const result = await api("/admin/postman-accounts");
+    if (!result.ok) {
+      if (result.status !== 401) { statusRow(els.accountsBody, 6, "Couldn't load Postman accounts."); fail(result); }
+      return;
+    }
+    accounts = result.data.accounts;
+    canStoreKeys = result.data.can_store_keys;
+    renderAccounts();
+  }
+
+  function renderAccounts() {
+    const empty = !accounts.length;
+    els.accountsCount.textContent = empty ? "" : String(accounts.length);
+    els.keyNotice.hidden = !empty;
+    els.secretNotice.hidden = canStoreKeys;
+    els.accountsEmpty.hidden = !empty;
+    els.accountsTable.hidden = empty;
+    els.accountsFoot.hidden = empty;
+    els.accountAdd.hidden = empty;
+    els.accountsRefresh.hidden = empty;
+    els.accountAdd.disabled = !canStoreKeys;
+    els.accountAddEmpty.disabled = !canStoreKeys;
+    els.accountsBody.textContent = "";
+    for (const account of accounts) els.accountsBody.appendChild(accountRow(account));
+  }
+
+  function accountRow(account) {
+    const row = el("tr");
+    const name = labeledCell("Account");
+    const nameWrap = el("span");
+    nameWrap.appendChild(el("span", "acc-name", account.label));
+    const sub = [];
+    if (account.postman_name && account.postman_name !== account.label) sub.push(account.postman_name);
+    if (account.region === "eu") sub.push("EU");
+    if (account.source === "environment") sub.push("Set on the server");
+    if (sub.length) nameWrap.appendChild(el("span", "acc-sub", sub.join(" · ")));
+    name.appendChild(nameWrap);
+    row.appendChild(name);
+
+    row.appendChild(labeledCell("Key", "mono", account.key_hint));
+
+    const reach = labeledCell("Workspaces");
+    const reachBtn = el("button", "link", String(account.workspace_count));
+    reachBtn.type = "button";
+    reachBtn.setAttribute("aria-label", "See workspaces");
+    reachBtn.addEventListener("click", () => switchTab("workspaces"));
+    reach.appendChild(reachBtn);
+    row.appendChild(reach);
+
+    row.appendChild(labeledCell("API usage", "acc-usage",
+      account.usage ? account.usage.used.toLocaleString() + " of " + account.usage.limit.toLocaleString() : "—"));
+
+    const status = labeledCell("Status");
+    const [kind, text] = ACCOUNT_STATUS[account.status] || ["", account.status];
+    status.appendChild(el("span", "status " + kind, text));
+    row.appendChild(status);
+
+    const actions = labeledCell("Actions", "u-actions");
+    const wrap = el("div", "action-row");
+    if (account.source === "environment") {
+      const note = el("span", "muted", "Managed by POSTMAN_API_KEY");
+      wrap.appendChild(note);
+    } else {
+      const rename = el("button", "btn sm", "Rename");
+      rename.type = "button";
+      rename.addEventListener("click", () => renameAccountDialog(account));
+      const replace = el("button", "btn sm", "Replace key");
+      replace.type = "button";
+      replace.disabled = !canStoreKeys;
+      replace.addEventListener("click", () => replaceKeyDialog(account));
+      const remove = el("button", "btn sm danger-ghost", "Remove");
+      remove.type = "button";
+      remove.addEventListener("click", () => removeAccountDialog(account));
+      wrap.appendChild(rename);
+      wrap.appendChild(replace);
+      wrap.appendChild(remove);
+    }
+    actions.appendChild(wrap);
+    row.appendChild(actions);
+    return row;
+  }
+
+  function field(labelText, input, id) {
+    const wrap = el("div", "field");
+    const label = el("label", null, labelText);
+    label.htmlFor = id;
+    input.id = id;
+    wrap.appendChild(label);
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  function keyInput() {
+    const input = document.createElement("input");
+    input.type = "password";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.placeholder = "PMAK-…";
+    return input;
+  }
+
+  function addAccountDialog() {
+    const key = keyInput();
+    const label = document.createElement("input");
+    label.type = "text";
+    label.placeholder = "Uses the name on the Postman account";
+    const region = document.createElement("select");
+    for (const [value, text] of [["us", "United States"], ["eu", "Europe"]]) {
+      const option = el("option", null, text);
+      option.value = value;
+      region.appendChild(option);
+    }
+    const help = el("p", "field-help");
+    help.append("Create a key in ");
+    const link = el("a", null, "Postman's API key settings");
+    link.href = "https://go.postman.co/settings/me/api-keys";
+    link.target = "_blank";
+    link.rel = "noopener";
+    help.append(link, ". Dispatch checks it with Postman, then stores it encrypted.");
+    return openDialog({
+      title: "Add a Postman account",
+      okLabel: "Add account",
+      body: [field("API key", key, "account-key"), field("Name (optional)", label, "account-label"), field("Postman region", region, "account-region"), help],
+      onSubmit: async () => {
+        if (!key.value.trim()) return { error: "Paste a Postman API key." };
+        const result = await api("/admin/postman-accounts", {
+          method: "POST",
+          body: { api_key: key.value.trim(), label: label.value.trim(), region: region.value },
+        });
+        if (!result.ok) return { error: result.error };
+        const count = result.data.workspace_count;
+        toastOk("Connected " + result.data.label + ": " + count + (count === 1 ? " workspace." : " workspaces."));
+        loadAccounts();
+        loadWorkspaces();
+        return null;
+      },
+    });
+  }
+
+  function renameAccountDialog(account) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = account.label;
+    return openDialog({
+      title: "Rename " + account.label,
+      okLabel: "Save",
+      body: [field("Name", input, "account-rename")],
+      onSubmit: async () => {
+        const label = input.value.trim();
+        if (!label) return { error: "Give the account a name." };
+        const result = await api("/admin/postman-accounts/" + encodeURIComponent(account.id), { method: "PATCH", body: { label } });
+        if (!result.ok) return { error: result.error };
+        toastOk("Renamed to " + result.data.label + ".");
+        loadAccounts();
+        loadWorkspaces();
+        return null;
+      },
+    });
+  }
+
+  function replaceKeyDialog(account) {
+    const key = keyInput();
+    return openDialog({
+      title: "Replace the key for " + account.label,
+      okLabel: "Replace key",
+      body: [field("New API key", key, "account-new-key"), el("p", "field-help", "People's access stays the same. The old key stops being used here, but stays valid in Postman until you revoke it there.")],
+      onSubmit: async () => {
+        if (!key.value.trim()) return { error: "Paste a Postman API key." };
+        const result = await api("/admin/postman-accounts/" + encodeURIComponent(account.id), { method: "PATCH", body: { api_key: key.value.trim() } });
+        if (!result.ok) return { error: result.error };
+        toastOk("Key replaced for " + account.label + ".");
+        loadAccounts();
+        loadWorkspaces();
+        return null;
+      },
+    });
+  }
+
+  function removeAccountDialog(account) {
+    return openDialog({
+      title: "Remove " + account.label + "?",
+      okLabel: "Remove account",
+      danger: true,
+      body: [el("p", "dialog-text muted", "People lose its " + account.workspace_count + " workspaces here, unless another connected account reaches them. Nothing changes in Postman, and the key stays valid there until you revoke it.")],
+      onSubmit: async () => {
+        const result = await api("/admin/postman-accounts/" + encodeURIComponent(account.id), { method: "DELETE" });
+        if (!result.ok) return { error: result.error };
+        toastOk("Removed " + account.label + ".");
+        loadAccounts();
+        loadWorkspaces();
+        return null;
+      },
+    });
+  }
+
+  els.accountAdd.addEventListener("click", addAccountDialog);
+  els.accountAddEmpty.addEventListener("click", addAccountDialog);
+  els.accountsRefresh.addEventListener("click", () => { loadAccounts(); loadWorkspaces(); });
+  els.keyNoticeGo.addEventListener("click", () => switchTab("accounts"));
+
   /* ---- workspaces ---- */
 
-  // Names for the access picker. A 503 means the server has no Postman key.
   async function loadWorkspaces() {
-    const result = await api("/workspaces");
-    els.keyNotice.hidden = result.status !== 503;
-    if (!result.ok || !result.data || !Array.isArray(result.data.workspaces)) { workspaces = null; return; }
-    workspaces = result.data.workspaces.map((w) => ({ id: w.id, name: w.name || w.id }));
+    if (!workspaces) skeletonRows(els.workspacesBody, 4);
+    const result = await api("/admin/workspaces");
+    if (!result.ok || !result.data || !Array.isArray(result.data.workspaces)) {
+      if (result.status !== 401) statusRow(els.workspacesBody, 4, "Couldn't load workspaces.");
+      workspaces = null;
+      return;
+    }
+    workspaces = result.data.workspaces;
+    els.workspacesCount.textContent = workspaces.length ? String(workspaces.length) : "";
+    const failed = result.data.failed_accounts || [];
+    els.workspacesFailed.hidden = !failed.length;
+    els.workspacesFailedText.textContent = failed.length
+      ? "Couldn't list workspaces from " + failed.join(", ") + ", so some may be missing. Check Postman accounts."
+      : "";
+    renderWorkspaces();
     renderUsers();
   }
+
+  // People who can reach a workspace, split by how they got there.
+  function membersOf(id) {
+    const direct = allUsers.filter((u) => u.role !== "admin" && (u.workspace_grants || []).includes(id));
+    const everywhere = allUsers.filter((u) => u.role === "admin" || u.workspace_grants === null || u.workspace_grants === undefined);
+    return { direct, everywhere };
+  }
+
+  function renderWorkspaces() {
+    if (!workspaces) return;
+    els.workspacesBody.textContent = "";
+    const query = els.workspacesSearch.value.trim().toLowerCase();
+    const shown = workspaces.filter((w) => !query || w.name.toLowerCase().includes(query));
+    if (!shown.length) {
+      statusRow(els.workspacesBody, 4, query ? "No workspaces match that search."
+        : accounts && accounts.length ? "These Postman accounts have no workspaces yet." : "Connect a Postman account to see its workspaces.");
+      return;
+    }
+    for (const workspace of shown) {
+      const row = el("tr");
+      const name = labeledCell("Workspace");
+      const wrap = el("span");
+      wrap.appendChild(el("span", "acc-name", workspace.name));
+      if (workspace.type) wrap.appendChild(el("span", "acc-sub", workspace.type === "personal" ? "Personal" : workspace.type === "team" ? "Team" : workspace.type));
+      name.appendChild(wrap);
+      row.appendChild(name);
+
+      const through = labeledCell("Through");
+      const pills = el("span");
+      for (const account of workspace.accounts) pills.appendChild(el("span", "pill", account.label));
+      through.appendChild(pills);
+      row.appendChild(through);
+
+      const { direct, everywhere } = membersOf(workspace.id);
+      const parts = [];
+      if (direct.length) parts.push(direct.length === 1 ? direct[0].email : direct.length + " people");
+      const extra = everywhere.length;
+      if (extra) parts.push(extra + " with all access");
+      row.appendChild(labeledCell("Who has access", "muted", parts.join(", ")));
+
+      const actions = labeledCell("Actions", "u-actions");
+      const wrapBtn = el("div", "action-row");
+      const manage = el("button", "btn sm", "Manage access");
+      manage.type = "button";
+      manage.addEventListener("click", () => workspaceAccessDialog(workspace));
+      wrapBtn.appendChild(manage);
+      actions.appendChild(wrapBtn);
+      row.appendChild(actions);
+      els.workspacesBody.appendChild(row);
+    }
+  }
+
+  function workspaceAccessDialog(workspace) {
+    const list = el("div");
+    const boxes = [];
+    const rowFor = (user) => {
+      const label = el("label", "check-row");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      const everywhere = user.role === "admin" || user.workspace_grants === null || user.workspace_grants === undefined;
+      box.checked = everywhere || (user.workspace_grants || []).includes(workspace.id);
+      box.disabled = everywhere;
+      if (!everywhere) boxes.push({ box, user });
+      label.appendChild(box);
+      label.appendChild(el("span", null, user.email || String(user.id)));
+      label.appendChild(el("span", "note", user.role === "admin" ? "Admin" : everywhere ? "All workspaces" : user.role));
+      return label;
+    };
+    for (const user of allUsers) list.appendChild(rowFor(user));
+    return openDialog({
+      title: "Access to " + workspace.name,
+      okLabel: "Save",
+      body: [list.children.length ? list : el("p", "dialog-text muted", "No people yet. Add them under Users.")],
+      onSubmit: async () => {
+        for (const { box, user } of boxes) {
+          const current = user.workspace_grants || [];
+          if (box.checked === current.includes(workspace.id)) continue;
+          const next = box.checked ? [...current, workspace.id] : current.filter((id) => id !== workspace.id);
+          const result = await api("/admin/users/" + encodeURIComponent(user.id), { method: "PATCH", body: { workspace_grants: next } });
+          if (!result.ok) {
+            renderWorkspaces();
+            renderUsers();
+            return { error: "Couldn't update " + user.email + ": " + result.error };
+          }
+          user.workspace_grants = next;
+        }
+        renderWorkspaces();
+        renderUsers();
+        toastOk("Access updated for " + workspace.name + ".");
+        return null;
+      },
+    });
+  }
+
+  els.workspacesSearch.addEventListener("input", renderWorkspaces);
+  els.workspacesRefresh.addEventListener("click", () => { loadUsers(); loadWorkspaces(); });
 
   /* ---- users ---- */
 
@@ -428,6 +774,7 @@
     allUsers = result.data;
     els.usersCount.textContent = String(allUsers.length);
     renderUsers();
+    renderWorkspaces();
   }
 
   function renderUsers() {
@@ -446,10 +793,11 @@
   function accessDialog(user) {
     const target = user.email || String(user.id);
     const grants = user.workspace_grants;
-    const row = (input, text) => {
+    const row = (input, text, note) => {
       const label = el("label", "check-row");
       label.appendChild(input);
       label.appendChild(el("span", null, text));
+      if (note) label.appendChild(el("span", "note", note));
       return label;
     };
     const radio = (checked) => {
@@ -464,17 +812,28 @@
     const list = el("div", "access-list");
     const boxes = [];
     let idsInput = null;
+    const body = [row(some, "Only selected workspaces"), row(all, "All workspaces, including ones added later")];
     if (workspaces && workspaces.length) {
       const known = workspaces.slice();
-      for (const id of grants || []) if (!known.some((w) => w.id === id)) known.push({ id, name: id });
+      for (const id of grants || []) if (!known.some((w) => w.id === id)) known.push({ id, name: id, accounts: [], missing: true });
+      const groups = new Map();
       for (const w of known) {
-        const box = document.createElement("input");
-        box.type = "checkbox";
-        box.value = w.id;
-        box.checked = (grants || []).includes(w.id);
-        box.addEventListener("change", () => { some.checked = true; });
-        boxes.push(box);
-        list.appendChild(row(box, w.name));
+        const group = w.missing ? "No longer reachable" : w.accounts[0].label;
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push(w);
+      }
+      for (const [group, members] of groups) {
+        const heading = groups.size > 1 ? el("div", "access-group", group) : null;
+        if (heading) list.appendChild(heading);
+        for (const w of members) {
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.value = w.id;
+          box.checked = (grants || []).includes(w.id);
+          box.addEventListener("change", () => { some.checked = true; });
+          boxes.push(box);
+          list.appendChild(row(box, w.name, w.accounts.length > 1 ? "also " + w.accounts.slice(1).map((a) => a.label).join(", ") : ""));
+        }
       }
     } else {
       const field = el("div", "field");
@@ -490,22 +849,23 @@
       field.appendChild(idsInput);
       list.appendChild(field);
     }
+    body.push(list);
     return openDialog({
       title: "Workspace access for " + target,
       okLabel: "Save",
-      body: [row(all, "All workspaces"), row(some, "Only selected workspaces"), list],
+      body,
       onSubmit: async () => {
         let next = null;
         if (some.checked) {
           next = idsInput
             ? idsInput.value.split(",").map((part) => part.trim()).filter(Boolean)
             : boxes.filter((b) => b.checked).map((b) => b.value);
-          if (!next.length) return { error: "Choose at least one workspace, or give this user all workspaces." };
         }
         const result = await api("/admin/users/" + encodeURIComponent(user.id), { method: "PATCH", body: { workspace_grants: next } });
         if (!result.ok) return { error: result.error };
         user.workspace_grants = next;
         renderUsers();
+        renderWorkspaces();
         toastOk("Workspace access updated for " + target + ".");
         return null;
       },
@@ -598,6 +958,7 @@
     const isAdmin = user.role === "admin";
     const grantsBtn = el("button", "access-btn", isAdmin ? "All workspaces" : grantsText(user.workspace_grants));
     grantsBtn.type = "button";
+    if (!isAdmin && user.workspace_grants && !user.workspace_grants.length) grantsBtn.classList.add("none");
     grantsBtn.disabled = isAdmin;
     if (isAdmin) grantsBtn.title = "Admins can always access every workspace.";
     grantsBtn.addEventListener("click", () => accessDialog(user));
@@ -657,7 +1018,10 @@
     els.newRole.value = "viewer";
     showAddForm(false);
     toastOk("User " + email + " created.");
-    loadUsers();
+    await loadUsers();
+    // Nobody but an admin reaches anything until granted, so ask straight away.
+    const created = allUsers.find((u) => u.id === result.data.id);
+    if (created && created.role !== "admin" && workspaces && workspaces.length) accessDialog(created);
   });
 
   els.usersRefresh.addEventListener("click", () => { loadUsers(); loadWorkspaces(); });

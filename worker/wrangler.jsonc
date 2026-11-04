@@ -35,6 +35,8 @@
   }
   // Secrets (the Deploy button prompts for these from .dev.vars.example;
   // manually: npx wrangler secret put <name>):
-  //   POSTMAN_API_KEY   — the shared Postman key (proxy answers 503 without it)
+  //   SECRET_KEY        — encrypts the Postman keys added in the admin panel;
+  //                       at least 32 random characters (openssl rand -hex 32)
+  //   POSTMAN_API_KEY   — optional: one more Postman key, set here instead of in the panel
   //   ADMIN_PASSWORD    — only needed when REQUIRE_AUTH is "false"
 }

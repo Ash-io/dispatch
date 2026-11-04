@@ -4,8 +4,9 @@
 #
 # The disk mounts at /data and the container defaults DB_PATH there, so users,
 # tokens and the audit log survive deploys and restarts.
-# POSTMAN_API_KEY is intentionally prompt-only (sync: false) — Render asks for
-# it during the button flow; it's never committed here.
+# POSTMAN_API_KEY is optional and prompt-only (sync: false): leave it empty and
+# add Postman keys in the admin panel. Those are encrypted with a secret kept on
+# the same disk, next to the database.
 services:
   - type: web
     name: dispatch-server

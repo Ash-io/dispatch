@@ -1,10 +1,11 @@
 //! dispatch-server — the self-hostable backend for the Dispatch desktop app.
 //!
-//! One shared Postman API key (env), served to multiple users through
-//! role-based access control: config.rs reads the environment, db.rs owns the
-//! SQLite store, auth.rs the accounts/tokens, proxy.rs the Postman
-//! passthrough, and admin.rs the admin API plus the embedded admin panel.
+//! Connected Postman accounts, served to multiple users through role-based
+//! access control: config.rs reads the environment, db.rs owns the SQLite store,
+//! auth.rs the users/tokens, accounts.rs the stored Postman keys, proxy.rs the
+//! Postman passthrough, and admin.rs the admin API plus the embedded admin panel.
 
+mod accounts;
 mod admin;
 mod auth;
 mod config;
@@ -35,6 +36,8 @@ pub struct AppState {
     /// Per-workspace list responses seen by the proxy (60s TTL), keyed by
     /// "<base path>:<workspace id>".
     pub list_cache: Mutex<HashMap<String, CachedList>>,
+    /// When the workspace → account map was last refreshed.
+    pub last_workspace_sync: Mutex<Option<Instant>>,
 }
 
 /// A cached per-workspace list response and the rate-limit header that came
@@ -55,11 +58,6 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let config = Config::from_env()?;
-    if config.postman_api_key.is_none() {
-        eprintln!(
-            "dispatch-server: POSTMAN_API_KEY is not set — proxying is disabled (auth and the admin API still work)"
-        );
-    }
     let db = db::open(&config.db_path)?;
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
@@ -71,6 +69,7 @@ async fn run() -> Result<(), String> {
         config,
         http,
         list_cache: Mutex::new(HashMap::new()),
+        last_workspace_sync: Mutex::new(None),
     });
 
     let addr = state.config.listen_addr.clone();
@@ -98,6 +97,9 @@ pub fn router(state: std::sync::Arc<AppState>) -> Router {
         .route("/me", get(auth::me))
         .route("/admin/users", get(admin::users_list).post(admin::users_create))
         .route("/admin/users/{id}", patch(admin::users_update).delete(admin::users_delete))
+        .route("/admin/postman-accounts", get(admin::accounts_list).post(admin::accounts_create))
+        .route("/admin/postman-accounts/{id}", patch(admin::accounts_update).delete(admin::accounts_delete))
+        .route("/admin/workspaces", get(admin::workspaces_list))
         .route("/admin/settings", get(admin::settings_get).patch(admin::settings_patch))
         .route("/admin/audit", get(admin::audit_list))
         .route("/admin", get(admin::panel_redirect))

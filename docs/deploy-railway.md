@@ -12,7 +12,7 @@ Publishing it once (maintainer task, ~5 minutes):
 2. **Add New → GitHub Repo** → pick a fork or this repo.
 3. Service **Settings → Root Directory**: `server` (the app and its `Dockerfile` live there; Railway detects the Dockerfile and builds it).
 4. **Variables** tab:
-   - `POSTMAN_API_KEY` — leave empty; whoever deploys the template fills it in.
+   - `POSTMAN_API_KEY` — optional, leave empty: Postman keys are added in the admin panel at `/admin/`.
    - `DB_PATH` = `/data/dispatch-server.db`
    - `REQUIRE_AUTH` = `true` (`false` instead? also add `ADMIN_PASSWORD` = `${{secret(32)}}`, which generates a random admin password at deploy time)
 5. Right-click the service → **Attach Volume** → mount path `/data` (the SQLite database file lives there and survives restarts and redeploys).
@@ -23,7 +23,7 @@ Publishing it once (maintainer task, ~5 minutes):
 
 1. New project → **Deploy from GitHub repo** → select your fork of Dispatch.
 2. Service settings: **Root Directory** `server`; Railway builds `server/Dockerfile` automatically.
-3. Variables: `POSTMAN_API_KEY` (the Postman key), `DB_PATH=/data/dispatch-server.db`.
+3. Variables: `DB_PATH=/data/dispatch-server.db`. Add Postman keys in the admin panel at `/admin/` afterwards.
 4. Attach a volume at `/data` — without it, accounts and audit history are lost on every redeploy.
 5. **Public Networking → HTTP** to expose the server; the generated `xxx.up.railway.app` URL is what users put into Dispatch (Settings → Profiles → Add profile → **Dispatch server**), and `https://<host>/admin/` is the admin panel.
 

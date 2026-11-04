@@ -1,7 +1,7 @@
 [package]
 name = "dispatch-server"
 version = "0.1.0"
-description = "Self-hostable backend for the Dispatch desktop app: one shared Postman API key served through role-based access control."
+description = "Self-hostable backend for the Dispatch desktop app: connected Postman accounts served through role-based access control."
 edition = "2021"
 
 # Standalone backend crate, deliberately outside the Tauri app's workspace.
@@ -19,3 +19,4 @@ rand = "0.8"
 sha2 = "0.10"
 hex = "0.4"
 include_dir = "0.7"
+aes-gcm = "0.10"
