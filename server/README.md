@@ -49,7 +49,7 @@ Render: use the **Deploy to Render** button in the top-level README — [`render
 
 ## Auth modes
 
-- **Enforced (default).** Registration is open until you turn it off in the admin panel. The **first registered user becomes admin**. Users log in with email + password; the desktop client stores the session token.
+- **Enforced (default).** Registration is open until you turn it off in the admin panel. The **first registered user becomes admin**: open `/admin/` and choose **New server? Create the first account**. New accounts are viewers with access to all workspaces, so turn registration off once your team is set up. Users log in with email + password; the desktop client stores the session token.
 - **Open (`REQUIRE_AUTH=false`).** Everything reachable is proxyable without an account, with editor-like access. Useful on a trusted LAN; the admin panel still needs `ADMIN_PASSWORD`.
 
 ## Admin panel
