@@ -14,7 +14,7 @@
 <main id="view-login" class="login-wrap">
   <section class="card login-card">
     <h1 class="brand"><img src="./favicon.svg" alt="">Dispatch <span class="brand-sub">Admin</span></h1>
-    <p class="muted login-sub">Manage users, registration settings and the audit log.</p>
+    <p class="muted login-sub" id="login-sub">Sign in to manage users and review activity.</p>
     <form id="login-form" data-mode="credentials" novalidate>
       <div class="field cred-only">
         <label for="login-email">Email</label>
@@ -28,25 +28,27 @@
       <button class="btn primary block" id="login-submit" type="submit">Sign in</button>
     </form>
     <p class="mode-switch">
+      <button class="link" id="register-toggle" type="button">New server? Create the first account</button>
       <button class="link" id="mode-toggle" type="button">Use server admin password instead</button>
     </p>
   </section>
 </main>
 
-<!-- App view: users / settings / audit reachable via tabs -->
-<div id="view-app" hidden>
-  <header class="topbar">
-    <div class="brand"><img src="./favicon.svg" alt="">Dispatch <span class="brand-sub">Admin</span></div>
+<!-- App view: users / settings / audit -->
+<div id="view-app" class="shell" hidden>
+  <aside class="sidebar">
+    <div class="brand side-brand"><img src="./favicon.svg" alt="">Dispatch <span class="brand-sub">Admin</span></div>
     <nav class="tabs" aria-label="Admin sections">
-      <button class="tab active" data-tab="users" type="button">Users</button>
-      <button class="tab" data-tab="settings" type="button">Settings</button>
-      <button class="tab" data-tab="audit" type="button">Audit</button>
+      <button class="tab active" data-tab="users" type="button"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="5.5" r="2.5"/><path d="M1.5 13.5c.4-2.6 2.2-4 4.5-4s4.100 1.400 4.500 4"/><path d="M11 3.300a2.500 2.500 0 0 1 0 4.400M12.500 9.800c1.100.6 1.800 1.900 2 3.700"/></svg>Users<span class="tab-count" id="users-count"></span></button>
+      <button class="tab" data-tab="settings" type="button"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.500h6M12 4.500h2M2 11.500h2M8 11.500h6"/><circle cx="10" cy="4.500" r="2"/><circle cx="6" cy="11.500" r="2"/></svg>Settings</button>
+      <button class="tab" data-tab="audit" type="button"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h6"/></svg>Audit log</button>
     </nav>
-    <div class="topbar-user">
-      <span id="me-email" class="muted"></span>
-      <button class="btn" id="logout-btn" type="button">Log out</button>
+    <div class="side-foot">
+      <span class="avatar" id="me-avatar" aria-hidden="true"></span>
+      <span id="me-email" class="me-email"></span>
+      <button class="icon-btn" id="logout-btn" type="button" title="Log out" aria-label="Log out"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2.500H3.500a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H6"/><path d="M10.500 11l3-3-3-3M13.500 8H6"/></svg></button>
     </div>
-  </header>
+  </aside>
 
   <main class="content">
 
@@ -54,11 +56,22 @@
     <section id="tab-users" class="panel">
       <div class="panel-head">
         <h2>Users</h2>
-        <button class="btn" id="users-refresh" type="button">Refresh</button>
+        <div class="panel-tools">
+          <label class="search"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.500"/><path d="M10.500 10.500 14 14"/></svg><span class="visually-hidden">Search users</span><input id="users-search" type="search" placeholder="Search by email" spellcheck="false"></label>
+          <button class="icon-btn" id="users-refresh" type="button" title="Refresh" aria-label="Refresh users"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.500 8a5.500 5.500 0 1 1-1.600-3.900"/><path d="M13.500 2v3h-3"/></svg></button>
+          <button class="btn primary" id="add-user-open" type="button">Add user</button>
+        </div>
       </div>
 
-      <form id="add-user-form" class="card add-user" novalidate>
-        <h3>Add user</h3>
+      <div class="notice warn" id="reg-notice" hidden>
+        <p><b>Registration is open.</b> Anyone who can reach this server can create an account and read your workspaces.</p>
+        <button class="btn sm" id="reg-close" type="button">Turn off</button>
+      </div>
+      <div class="notice bad" id="key-notice" hidden>
+        <p><b>No Postman API key.</b> Users can sign in but can't reach any workspaces until <code>POSTMAN_API_KEY</code> is set on the server.</p>
+      </div>
+
+      <form id="add-user-form" class="card add-user" novalidate hidden>
         <div class="add-grid">
           <div class="field">
             <label for="new-email">Email</label>
@@ -66,19 +79,23 @@
           </div>
           <div class="field">
             <label for="new-password">Password</label>
-            <input id="new-password" type="password" autocomplete="new-password">
+            <input id="new-password" type="password" autocomplete="new-password" placeholder="At least 8 characters">
           </div>
           <div class="field">
             <label for="new-role">Role</label>
             <select id="new-role">
-              <option value="viewer">viewer</option>
-              <option value="editor">editor</option>
-              <option value="creator">creator</option>
-              <option value="admin">admin</option>
+              <option value="viewer">Viewer</option>
+              <option value="editor">Editor</option>
+              <option value="creator">Creator</option>
+              <option value="admin">Admin</option>
             </select>
           </div>
-          <button class="btn primary" id="add-user-submit" type="submit">Create user</button>
+          <div class="add-actions">
+            <button class="btn" id="add-user-cancel" type="button">Cancel</button>
+            <button class="btn primary" id="add-user-submit" type="submit">Create user</button>
+          </div>
         </div>
+        <p class="form-error" id="add-user-error" role="alert" hidden></p>
       </form>
 
       <div class="tablewrap">
@@ -87,7 +104,7 @@
             <tr>
               <th scope="col">Email</th>
               <th scope="col">Role</th>
-              <th scope="col">Workspace grants</th>
+              <th scope="col">Workspace access</th>
               <th scope="col">Created</th>
               <th scope="col" class="u-actions-h"><span class="visually-hidden">Actions</span></th>
             </tr>
@@ -95,6 +112,13 @@
           <tbody id="users-body"></tbody>
         </table>
       </div>
+
+      <dl class="role-key">
+        <div><dt>Viewer</dt><dd>Read only, with private variable values hidden</dd></div>
+        <div><dt>Editor</dt><dd>Edit collections and environments</dd></div>
+        <div><dt>Creator</dt><dd>Editor, plus create collections</dd></div>
+        <div><dt>Admin</dt><dd>Everything, including deletes and this panel</dd></div>
+      </dl>
     </section>
 
     <!-- Settings -->
@@ -107,7 +131,7 @@
           <input type="checkbox" id="allow-registration">
           <span class="slider" aria-hidden="true"></span>
           <span class="setting-text">Allow registration
-            <small class="muted">When enabled, visitors can create their own accounts. Existing users can always sign in.</small>
+            <small class="muted">Anyone who can reach this server can create an account with read access to all workspaces. Turn this off once your team is set up and add people from Users instead. Existing users can always sign in.</small>
           </span>
         </label>
       </div>
@@ -117,7 +141,15 @@
     <section id="tab-audit" class="panel" hidden>
       <div class="panel-head">
         <h2>Audit log</h2>
-        <button class="btn" id="audit-refresh" type="button">Refresh</button>
+        <div class="panel-tools">
+          <label class="search"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.500"/><path d="M10.500 10.500 14 14"/></svg><span class="visually-hidden">Filter the audit log</span><input id="audit-search" type="search" placeholder="Filter by user or request" spellcheck="false"></label>
+          <label class="visually-hidden" for="audit-status">Status</label>
+          <select id="audit-status" class="status-filter">
+            <option value="">All statuses</option>
+            <option value="failed">Failed only</option>
+          </select>
+          <button class="icon-btn" id="audit-refresh" type="button" title="Refresh" aria-label="Refresh audit log"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.500 8a5.500 5.500 0 1 1-1.600-3.900"/><path d="M13.500 2v3h-3"/></svg></button>
+        </div>
       </div>
       <div class="tablewrap">
         <table class="data-table">
@@ -133,10 +165,23 @@
           <tbody id="audit-body"></tbody>
         </table>
       </div>
+      <p class="table-foot muted" id="audit-foot"></p>
     </section>
 
   </main>
 </div>
+
+<dialog id="dialog" class="modal">
+  <form id="dialog-form" method="dialog" novalidate>
+    <h2 id="dialog-title"></h2>
+    <div id="dialog-body"></div>
+    <p class="form-error" id="dialog-error" role="alert" hidden></p>
+    <div class="modal-actions">
+      <button class="btn" id="dialog-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="dialog-ok" type="submit">OK</button>
+    </div>
+  </form>
+</dialog>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="./app.js"></script>

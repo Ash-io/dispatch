@@ -4,7 +4,7 @@ The [Deploy to Cloudflare button](https://deploy.workers.cloudflare.com/?url=htt
 
 This folder must stay self-contained, because the button treats it as the root of a new repository. Nothing in it can point outside `worker/`.
 
-The first account registered becomes admin and registration is open by default, so register yours straight after deploying.
+The first account registered becomes admin and registration is open by default. Straight after deploying, open `/admin/`, choose **New server? Create the first account**, then turn registration off unless you want open sign-ups: new accounts get read access to all workspaces.
 
 ```sh
 npm run deploy:server   # from the repo root: provisions D1, binds it, deploys;
