@@ -4,7 +4,7 @@ Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL, built wit
 
 ## Layout
 
-- `src/`: desktop UI in plain HTML, CSS and JS modules. There is no framework and no build step.
+- `src/`: desktop UI in plain HTML, CSS and JS modules. There is no framework and no build step. Libraries are committed, already built, to `src/vendor/` and loaded on first use (`src/js/vendor.js`). CodeMirror is the one exception with a recipe: change `scripts/codemirror-entry.js` and run `scripts/build-codemirror.sh`.
 - `src-tauri/`: native shell in Rust.
 - `server/`: `dispatch-server`, a standalone Rust crate outside the Tauri workspace. It has its own users and roles, and serves the workspaces of any Postman accounts an admin connects. Postman stays the source of truth.
 - `worker/`: the same server API on Cloudflare Workers with D1.
@@ -37,6 +37,7 @@ For UI work without the native shell, open `src/index.html` in a browser. It run
 
 ## Keep these in sync
 
+- **JSON editing:** body, GraphQL variables, gRPC message and example editors, and the pretty JSON response, use `codeEditor` (`src/js/ui/codeedit.js`). Problems, folding and suggestions come from `src/js/jsonc.js`, which is tested in Node. Key suggestions only ever carry key names and types from the collection's bodies, never values. CodeMirror shortcuts that clash with the app's own are dropped in `TAKEN_KEYS`: check that list when adding an app shortcut.
 - **Native calls:** `src/js/bridge.js` has a Tauri path and a mock path. When you add or change a native command, update `src/js/mock.js` too, so the browser build keeps working.
 - **Server API:** `server/` and `worker/src/index.js` implement the same contract, roles, redaction and admin API. Change both. The admin panel exists twice, in `server/admin/` and `worker/admin/`: edit both, and `npm test` fails if they differ.
 - **Deploy to Cloudflare button:** `worker/` must stay self-contained, because the button treats it as the root of a new repository. Nothing in it can point outside the folder.

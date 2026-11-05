@@ -2,7 +2,9 @@
 // message as JSON, invoke, and see each streamed reply.
 
 import { h, icon, toast, errText } from './dom.js';
-import { kvSection, codeArea, highlightJson, subtabs } from './components.js';
+import { kvSection, highlightJson, subtabs } from './components.js';
+import { codeEditor } from './codeedit.js';
+import { collectKeys } from '../jsonc.js';
 import * as C from '../ctx.js';
 import { emit } from '../store.js';
 import { bridge } from '../bridge.js';
@@ -58,7 +60,7 @@ export function renderGrpcTab(root, t) {
   const pane = h('div', { class: 'pane' });
   const renderPane = () => {
     if (t.sub === 'metadata') { pane.replaceChildren(kvSection({ title: 'Metadata', rows: d.metadata, kind: 'headers', resolver: () => C.resolverFor({ ref: null }), onChange: dirty })); return; }
-    const ta = codeArea({ value: d.message || '', lang: 'json', minHeight: 180, placeholder: '{\n  "id": "123"\n}', oninput: (v) => { d.message = v; dirty(); } });
+    const ta = codeEditor({ value: d.message || '', lang: 'json', minHeight: 180, resolver: () => C.resolverFor({ ref: null }), keys: () => collectKeys(method?.template ? [method.template] : []), placeholder: '{\n  "id": "123"\n}', oninput: (v) => { d.message = v; dirty(); } });
     pane.replaceChildren(
       h('div', { class: 'row', style: { marginBottom: '8px' } }, h('span', { class: 'faint', style: { fontSize: '12px' } }, 'Message (JSON)'), h('span', { class: 'grow' }),
         method ? h('button', { class: 'btn ghost sm', onclick: () => { ta.value = method.template; d.message = method.template; dirty(); } }, 'Use template') : null,

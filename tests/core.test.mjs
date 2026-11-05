@@ -1221,3 +1221,89 @@ test('the Worker ships the same admin panel as the server', () => {
     assert.equal(readFileSync(new URL(n, dir('worker/admin')), 'utf8'), readFileSync(new URL(n, dir('server/admin')), 'utf8'), n);
   }
 });
+
+import { jsonIssues, bracketPairs, minifyJsonc, contextAt, collectKeys } from '../src/js/jsonc.js';
+
+test('jsonIssues agrees with JSON.parse on plain JSON, including broken text', () => {
+  const valid = ['{}', '[]', '1', '-0.5e3', '"x"', 'null', '{"a":[1,{"b":"\\u00e9\\n"}],"c":true}', ' [ 1 , 2 ] '];
+  const broken = ['{', '[', '}', '{"a"}', '{"a":}', '{"a":1,}', '[1,]', '[1 2]', '{a:1}', "{'a':1}", '01', '1.', 'tru', '"x', '"\\q"', '"a\tb"', '{"a":1}}', '1 2', '{"a" 1}', '+1'];
+  for (const s of valid) assert.deepEqual(jsonIssues(s), [], s);
+  for (const s of broken) {
+    assert.throws(() => JSON.parse(s), undefined, `fixture ${s} should be invalid`);
+    assert.equal(jsonIssues(s).filter((i) => i.severity === 'error').length, 1, s);
+  }
+  // Every truncation and deleted character of a real document must get the same verdict as JSON.parse.
+  const doc = '{"id": 12, "tags": ["a", "b\\n"], "ok": true, "n": {"x": null, "y": -1.5e2}}';
+  const variants = [];
+  for (let i = 1; i < doc.length; i++) variants.push(doc.slice(0, i), doc.slice(0, i) + doc.slice(i + 1)); // an empty body is fine here, unlike JSON.parse
+  for (const s of variants) {
+    let ok = true;
+    try { JSON.parse(s); } catch { ok = false; }
+    assert.equal(!jsonIssues(s).some((x) => x.severity === 'error'), ok, s);
+  }
+});
+
+test('jsonIssues allows comments and variables and points at the problem', () => {
+  assert.deepEqual(jsonIssues(''), []);
+  assert.deepEqual(jsonIssues('// note\n{\n  "a": {{amount}}, /* x */\n  "b": "{{name}}",\n  "c": [{{one}}, 2]\n}'), []);
+  const src = '{\n  "a": 1\n  "b": 2\n}';
+  const [miss] = jsonIssues(src);
+  assert.equal(src.slice(miss.from, miss.to), '"b"');
+  assert.match(miss.message, /comma/);
+  const trailing = '{"a": 1, }';
+  assert.equal(jsonIssues(trailing)[0].from, trailing.indexOf(','));
+  assert.match(jsonIssues(trailing)[0].message, /trailing comma/);
+  const dup = jsonIssues('{"a": 1, "a": 2}');
+  assert.deepEqual(dup.map((d) => d.severity), ['warning']);
+  assert.equal(jsonIssues('['.repeat(200000)).length <= 1, true, 'absurd nesting must not throw');
+});
+
+test('bracketPairs ignores brackets in strings and comments', () => {
+  const src = '{"a": "}", /* ] */ "b": [1]}';
+  assert.deepEqual(bracketPairs(src), [[src.indexOf('[1'), src.indexOf(']}')], [0, src.length - 1]]);
+  assert.deepEqual(bracketPairs('{]'), []);
+});
+
+test('minifyJsonc drops comments and keeps variables, and refuses invalid JSON', () => {
+  assert.equal(minifyJsonc('{\n  // c\n  "a": {{x}},\n  "b": "{{y}} z"\n}'), '{"a":{{x}},"b":"{{y}} z"}');
+  assert.throws(() => minifyJsonc('{"a":'));
+});
+
+test('contextAt finds the key or value position and its path', () => {
+  const at = (marked) => { const pos = marked.indexOf('|'); return contextAt(marked.replace('|', ''), pos); };
+  let c = at('{ "user": { "na|" } }');
+  assert.equal(c.kind, 'key'); assert.deepEqual(c.path, ['user']); assert.equal(c.prefix, 'na'); assert.equal(c.quoted, true); assert.equal(c.closed, true);
+  c = at('{\n  |\n}');
+  assert.equal(c.kind, 'key'); assert.deepEqual(c.path, []); assert.equal(c.prefix, '');
+  c = at('{ "a": 1, "b": 2, |, "c": 3 }');
+  assert.equal(c.kind, 'key'); assert.deepEqual([...c.used].sort(), ['a', 'b', 'c']);
+  c = at('{ "items": [ { "i|" } ] }');
+  assert.equal(c.kind, 'key'); assert.deepEqual(c.path, ['items', '[]']);
+  c = at('{ "ok": t| }');
+  assert.equal(c.kind, 'value'); assert.equal(c.prefix, 't'); assert.deepEqual(c.path, ['ok']);
+  assert.equal(at('{ "a": 1 |}').kind, null, 'after a value only a comma or close fits');
+  assert.equal(at('{ "a" |: 1 }').kind, null);
+  assert.equal(at('{ // no|te\n }').kind, null, 'nothing inside comments');
+  c = at('{ "a": "{{x|}}" }');
+  assert.equal(c.kind, 'value', 'a variable in a string is handled by the variable source, not here');
+});
+
+test('collectionJsonBodies gathers JSON request bodies, including saved examples', async () => {
+  const { collectionJsonBodies } = await import('../src/js/model.js');
+  const raw = (s, language = 'json') => ({ body: { mode: 'raw', raw: s, options: { raw: { language } } } });
+  const col = { item: [
+    { request: raw('{"a":1}'), response: [{ originalRequest: raw('{"ex":1}') }] },
+    { item: [{ request: raw('<x/>', 'xml') }, { request: { body: { mode: 'graphql', graphql: { query: 'q', variables: '{"v":1}' } } } }] },
+    { request: { body: { mode: 'raw', raw: '{"noLang":1}' } } },
+  ] };
+  assert.deepEqual(collectionJsonBodies(col), ['{"a":1}', '{"ex":1}', '{"v":1}', '{"noLang":1}']);
+  assert.deepEqual(collectionJsonBodies(undefined), []);
+});
+
+test('collectKeys indexes names and types per path, never values', () => {
+  const idx = collectKeys(['{"user": {"name": "s3cret", "age": 3}, "items": [{"id": 1}], "t": {{tok}}}', 'not json', '', '// c\n{"user": {"email": null}}']);
+  assert.deepEqual([...idx.get('').keys()].sort(), ['items', 't', 'user']);
+  assert.deepEqual(Object.fromEntries(idx.get('user')), { name: 'string', age: 'number', email: 'null' });
+  assert.deepEqual([...idx.get('items/[]').keys()], ['id']);
+  assert.ok(!JSON.stringify([...idx.values()].map((m) => [...m])).includes('s3cret'));
+});
