@@ -187,7 +187,7 @@ document.addEventListener('keydown', (e) => {
   else if (k === ',') { e.preventDefault(); openSettings(); }
   else if (k === 'l' && t?.kind === 'request') { e.preventDefault(); editorEl?.focusUrl?.(); }
   else if (e.code === 'KeyC' && e.altKey && t?.kind === 'request') { e.preventDefault(); codeDialog(t); }
-  else if (k === 'f' && !e.shiftKey && t?.kind === 'request' && t.response?.response && !t.response.response.bodyBase64) {
+  else if (k === 'f' && !e.shiftKey && !e.target?.closest?.('.cm-editor') && t?.kind === 'request' && t.response?.response && !t.response.response.bodyBase64) {
     // Find in the response body (the request editor's own fields keep native find).
     e.preventDefault();
     t.find = { ...(t.find || { q: '' }), open: true };

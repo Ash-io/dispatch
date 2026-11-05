@@ -1,7 +1,8 @@
 // Example tab: the saved request on top, the saved response below. Both are editable.
 
 import { h, icon, showMenu, toast, methodClass } from './dom.js';
-import { varInput, kvSection, codeArea, subtabs } from './components.js';
+import { varInput, kvSection, subtabs } from './components.js';
+import { codeEditor } from './codeedit.js';
 import { bodyEditor, beautifyJson } from './request.js';
 import * as C from '../ctx.js';
 import { METHODS, urlObject, setRawUrl, rawWithQuery, parseUrl } from '../model.js';
@@ -111,7 +112,7 @@ export function renderExampleResponse(root, t) {
     body.append(h('div', { class: 'pane' }, kvSection({ title: 'Response headers', rows: d.header, kind: 'headers', descriptions: false, onChange: dirty })));
   } else {
     const lang = d._postman_previewlanguage || 'text';
-    const ta = codeArea({ value: d.body, lang, placeholder: 'Response body', oninput: (v) => { d.body = v; dirty(); } });
+    const ta = codeEditor({ value: d.body, lang, placeholder: 'Response body', oninput: (v) => { d.body = v; dirty(); } });
     const langSel = h('select', { class: 'select', style: { height: '26px', fontSize: '12px' }, onchange: (e) => { d._postman_previewlanguage = e.target.value; ta.setLang(e.target.value); dirty(); } },
       LANGS.map(([id, label]) => h('option', { value: id, selected: id === lang }, label)));
     const beautify = h('button', { class: 'btn ghost sm', onclick: () => {

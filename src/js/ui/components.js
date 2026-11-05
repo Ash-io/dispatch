@@ -4,10 +4,10 @@ import { h, icon } from './dom.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-const SCOPE_LABEL = { local: 'Local', data: 'Data', environment: 'Environment', collection: 'Collection', globals: 'Global', vault: 'Vault', dynamic: 'Dynamic' };
+export const SCOPE_LABEL = { local: 'Local', data: 'Data', environment: 'Environment', collection: 'Collection', globals: 'Global', vault: 'Vault', dynamic: 'Dynamic' };
 
 /** Hover text: the resolved string, then where each variable's value comes from. */
-function varTitle(v, r) {
+export function varTitle(v, r) {
   const names = [...new Set([...v.matchAll(/\{\{([^{}]+?)\}\}/g)].map((m) => m[1].trim()))];
   const lines = names.map((n) => {
     const hit = r.lookup(n);

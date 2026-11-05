@@ -6,6 +6,7 @@ const VENDOR = {
   handlebars: ['vendor/handlebars.min.js', () => globalThis.Handlebars],
   yaml: ['vendor/js-yaml.min.js', () => globalThis.jsyaml],
   pmlibs: ['vendor/postman-libs.min.js', () => globalThis.__pmLibs],
+  cm: ['vendor/codemirror.min.js', () => globalThis.__cm],
 };
 const loading = {};
 

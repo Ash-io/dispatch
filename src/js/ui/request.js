@@ -3,14 +3,15 @@ import { LANGUAGES, generate } from '../codegen.js';
 import { docsEditor, descriptionText } from './docs.js';
 import { loadVendor } from '../vendor.js';
 import { varInput, kvSection, codeArea, highlightJson, subtabs } from './components.js';
+import { codeEditor } from './codeedit.js';
 import * as WS from '../ws.js';
 import * as C from '../ctx.js';
 import * as S from '../store.js';
 import { state } from '../store.js';
 import { bridge } from '../bridge.js';
-import { METHODS, urlObject, setRawUrl, rawWithQuery, getScript, setScript, AUTH_TYPES, authParam, setAuthParam, effectiveAuth, parseUrl, clone, exampleFromResponse } from '../model.js';
+import { collectionJsonBodies, METHODS, urlObject, setRawUrl, rawWithQuery, getScript, setScript, AUTH_TYPES, authParam, setAuthParam, effectiveAuth, parseUrl, clone, exampleFromResponse } from '../model.js';
 import { fetchOAuthToken } from '../send.js';
-import { formatJsonc, jsonProblem } from '../jsonc.js';
+import { formatJsonc, jsonProblem, minifyJsonc, collectKeys } from '../jsonc.js';
 import { parseSse, parseNdjson, isEventStream, isLineStream } from '../sse.js';
 
 // Less-used features load their code on first use.
@@ -119,7 +120,7 @@ export function renderRequestEditor(root, t) {
       const { auth, source } = effectiveAuth(req, parents, collection);
       pane.append(h('p', { class: 'hint' }, 'Dispatch adds ', h('span', { class: 'mono' }, 'Accept: */*'), ' and a Content-Type matching the body when you haven\'t set them.', auth ? ` Auth headers come from ${source === 'request' ? 'the Authorization tab' : `the ${source === 'collection' ? 'collection' : `"${source}" folder`}`}.` : ''));
     } else if (sub === 'body') {
-      pane.append(bodyEditor(req, resolver, dirty, () => { renderTabs(); }, { graphql: {
+      pane.append(bodyEditor(req, resolver, dirty, () => { renderTabs(); }, { collection, graphql: {
         schemaKey: () => { try { return C.outgoingFor(t).url; } catch { return ''; } },
         loadSchema: async () => {
           // Introspect the same endpoint, with the request's own headers and auth.
@@ -146,7 +147,7 @@ export function renderRequestEditor(root, t) {
 
   root.replaceChildren(crumbs, reqline, tabsHolder, pane);
   root.focusUrl = () => urlField.input.focus();
-  root.repaintVars = () => { urlField.repaint(); pane.querySelectorAll('.var-input').forEach((v) => v.repaint?.()); };
+  root.repaintVars = () => { urlField.repaint(); pane.querySelectorAll('.var-input, .cm-host').forEach((v) => v.repaint?.()); };
 }
 
 /**
@@ -333,16 +334,24 @@ export function bodyEditor(req, resolver, dirty, onModeChange, opts = {}) {
     const parts = [radios];
     if (mode === 'raw') {
       const curLang = body.options?.raw?.language || lang;
-      const langSel = h('select', { class: 'select', style: { height: '26px', fontSize: '12px' }, onchange: (e) => { body.options = { ...(body.options || {}), raw: { ...(body.options?.raw || {}), language: e.target.value } }; ta.setLang(e.target.value); dirty(); } },
+      const setRaw = (out) => { ta.value = out; body.raw = out; dirty(); };
+      const syncTools = (l) => { beautify.style.display = ['json', 'xml', 'html'].includes(l) ? '' : 'none'; minify.style.display = l === 'json' ? '' : 'none'; };
+      const langSel = h('select', { class: 'select', style: { height: '26px', fontSize: '12px' }, onchange: (e) => { body.options = { ...(body.options || {}), raw: { ...(body.options?.raw || {}), language: e.target.value } }; ta.setLang(e.target.value); syncTools(e.target.value); dirty(); } },
         [['json', 'JSON'], ['text', 'Text'], ['javascript', 'JavaScript'], ['html', 'HTML'], ['xml', 'XML']].map(([id, l]) => h('option', { value: id, selected: id === curLang }, l)));
-      const ta = codeArea({ value: body.raw || '', lang: curLang, placeholder: curLang === 'json' ? '{\n  "key": "value"\n}' : '', oninput: (v) => { body.raw = v; dirty(); } });
-      const beautify = h('button', { class: 'btn ghost sm', onclick: () => {
-        try {
-          const out = beautifyJson(ta.value);
-          ta.value = out; body.raw = out; dirty();
-        } catch (e) { toast(`That isn't valid JSON yet: ${e.message}`, { error: true }); }
+      // Key suggestions come from the other JSON bodies in this collection, read once per editor.
+      let keyIndex = null;
+      const keys = () => (keyIndex = keyIndex || collectKeys(collectionJsonBodies(opts.collection)));
+      const ta = codeEditor({ value: body.raw || '', lang: curLang, resolver, keys, placeholder: curLang === 'json' ? '{\n  "key": "value"\n}' : '', oninput: (v) => { body.raw = v; dirty(); } });
+      const beautify = h('button', { class: 'btn ghost sm', title: 'Format (Shift+Alt+F)', onclick: () => {
+        const l = body.options?.raw?.language || lang;
+        try { setRaw(l === 'json' ? beautifyJson(ta.value) : prettyXml(ta.value)); } catch (e) { toast(`That isn't valid JSON yet. ${e.message}`, { error: true }); }
       } }, 'Beautify');
-      parts.push(h('div', { class: 'row', style: { marginBottom: '8px' } }, langSel, h('span', { class: 'grow' }), beautify), h('div', { class: 'code-wrap' }, ta.el));
+      const minify = h('button', { class: 'btn ghost sm', title: 'Remove whitespace and comments', onclick: () => {
+        try { setRaw(minifyJsonc(ta.value)); } catch (e) { toast(`That isn't valid JSON yet. ${e.message}`, { error: true }); }
+      } }, 'Minify');
+      syncTools(curLang);
+      ta.el.addEventListener('keydown', (e) => { if (e.shiftKey && e.altKey && e.code === 'KeyF' && beautify.style.display !== 'none') { e.preventDefault(); beautify.click(); } });
+      parts.push(h('div', { class: 'row', style: { marginBottom: '8px' } }, langSel, h('span', { class: 'grow' }), minify, beautify), h('div', { class: 'code-wrap' }, ta.el));
     } else if (mode === 'urlencoded') {
       parts.push(kvSection({ rows: (body.urlencoded = body.urlencoded || []), resolver, kind: 'urlencoded', onChange: dirty }));
     } else if (mode === 'formdata') {
@@ -709,7 +718,7 @@ function bodyView(res, t) {
     h('span', { class: 'grow' }),
     isJson ? h('span', { class: 'faint', style: { fontSize: '12px' } }, 'JSON') : h('span', { class: 'faint', style: { fontSize: '12px' } }, ct.split(';')[0] || ''),
     isJson && textual ? h('button', { class: ['icon-btn', t.jsonFilter != null && 'on'], title: 'Filter with JSONPath', style: t.jsonFilter != null ? { color: 'var(--accent)' } : null, onclick: () => { t.jsonFilter = t.jsonFilter == null ? '' : null; rerender(); } }, icon('filter')) : null,
-    textual ? h('button', { class: ['icon-btn', t.find?.open && 'on'], title: 'Find (⌘F)', style: t.find?.open ? { color: 'var(--accent)' } : null, onclick: () => { t.find = { ...(t.find || { q: '' }), open: !t.find?.open }; rerender(); } }, icon('search')) : null,
+    textual ? h('button', { class: ['icon-btn', 'find-toggle', t.find?.open && 'on'], title: 'Find (⌘F)', style: t.find?.open ? { color: 'var(--accent)' } : null, onclick: () => { t.find = { ...(t.find || { q: '' }), open: !t.find?.open }; rerender(); } }, icon('search')) : null,
     h('button', { class: ['icon-btn', wrapOn && 'on'], title: wrapOn ? 'Turn off line wrap' : 'Wrap lines', style: wrapOn ? { color: 'var(--accent)' } : null, onclick: () => { t.wrap = !wrapOn; rerender(); } }, icon('wrap')),
     h('button', { class: 'icon-btn', title: 'Copy', onclick: async () => { await navigator.clipboard.writeText(res.bodyText ?? ''); toast('Copied'); } }, icon('copy')));
   // Toolbar plus the optional filter and find bars stay pinned together.
@@ -727,7 +736,12 @@ function bodyView(res, t) {
   } else {
     const text = res.bodyText || '';
     const pre = h('pre', { class: ['body', wrapOn && 'wrap'] });
+    // Pretty JSON gets folding, line numbers and search; other views stay plain text.
+    const viewer = view === 'pretty' && isJson && text.length < 3_000_000
+      ? codeEditor({ readOnly: true, lang: 'json', wrap: wrapOn, onSearchClose: () => { if (t.find) t.find.open = false; tools.querySelector('.find-toggle')?.classList.remove('on'); tools.querySelector('.find-toggle')?.style.removeProperty('color'); } })
+      : null;
     const showJson = (pretty) => {
+      if (viewer) { viewer.value = pretty; return; }
       pre.innerHTML = pretty.length < 1_500_000 ? highlightJson(pretty) : '';
       if (pretty.length >= 1_500_000) pre.textContent = pretty;
     };
@@ -765,11 +779,13 @@ function bodyView(res, t) {
     } else {
       paintBody();
     }
-    if (t.find?.open) {
+    if (t.find?.open && viewer) viewer.openSearch();
+    else if (t.find?.open) {
       findBar = findInBody(pre, t, () => { t.find.open = false; rerender(); });
       head.append(findBar);
     }
-    container.append(pre);
+    if (viewer) container.classList.add('resp-viewer');
+    container.append(viewer ? viewer.el : pre);
   }
   return container;
 }
@@ -875,7 +891,7 @@ function prettyXml(xml) {
   return xml.replace(/>\s*</g, '>\n<').split('\n').map((line) => {
     if (/^<\/\w/.test(line)) pad = Math.max(0, pad - 1);
     const out = '  '.repeat(pad) + line;
-    if (/^<\w[^>]*[^/]>.*$/.test(line) && !/<\/\w/.test(line) && !/^<(br|hr|img|input|meta|link)\b/i.test(line)) pad++;
+    if (/^<\w[^>]*>/.test(line) && !/\/>\s*$/.test(line) && !/<\/\w/.test(line) && !/^<(br|hr|img|input|meta|link)\b/i.test(line)) pad++;
     return out;
   }).join('\n');
 }

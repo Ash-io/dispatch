@@ -2,6 +2,7 @@
 
 import { h, icon, toast, errText } from './dom.js';
 import { codeArea } from './components.js';
+import { codeEditor } from './codeedit.js';
 import { validateQuery, completeAt, insertionFor } from '../graphql.js';
 
 // Schemas per endpoint for this session (introspection results can be large).
@@ -57,7 +58,7 @@ export function graphqlEditor({ body, dirty, schemaKey, loadSchema }) {
   ta.addEventListener('blur', () => setTimeout(closeMenu, 120));
   ta.addEventListener('click', () => closeMenu());
 
-  const vars = codeArea({ value: g.variables || '', lang: 'json', minHeight: 70, placeholder: '{\n  "id": "1"\n}', oninput: (v) => { g.variables = v; dirty(); } });
+  const vars = codeEditor({ value: g.variables || '', lang: 'json', minHeight: 110, placeholder: '{\n  "id": "1"\n}', oninput: (v) => { g.variables = v; dirty(); } });
 
   function setStatus() {
     status.textContent = schema ? `Schema: ${[...schema.types.values()].filter((t) => !t.name.startsWith('__')).length} types` : 'No schema loaded — Load schema for autocomplete and checks';

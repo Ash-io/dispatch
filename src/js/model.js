@@ -6,6 +6,24 @@ export const SCHEMA_V21 = 'https://schema.getpostman.com/json/collection/v2.1.0/
 
 export const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 
+/** Raw JSON request bodies across a collection, including those saved on examples. */
+export function collectionJsonBodies(collection) {
+  const out = [];
+  const add = (req) => {
+    const b = req?.body;
+    if (b?.mode === 'raw' && typeof b.raw === 'string' && (b.options?.raw?.language || 'json') === 'json') out.push(b.raw);
+    if (b?.mode === 'graphql' && typeof b.graphql?.variables === 'string') out.push(b.graphql.variables);
+  };
+  (function walk(items) {
+    for (const it of items || []) {
+      if (it.item) { walk(it.item); continue; }
+      add(it.request);
+      for (const ex of it.response || []) add(ex.originalRequest);
+    }
+  })(collection?.item);
+  return out;
+}
+
 export const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 
 export function uuid() {

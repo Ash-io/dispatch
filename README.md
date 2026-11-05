@@ -167,7 +167,9 @@ src/                 The interface (plain HTML, CSS and JavaScript modules; no b
   js/sync.js         Postman API calls
   js/store.js        App state, profiles, local storage, sync and conflict handling
   js/ui/             Sidebar, request editor, panels and shared components
-  vendor/            chai, crypto-js and lodash (MIT licensed)
+  js/ui/codeedit.js  JSON editor and response viewer, built on CodeMirror
+  js/jsonc.js        JSON with comments and {{variables}}: problems, formatting, suggestions
+  vendor/            Bundled libraries, including chai, crypto-js, lodash and CodeMirror (MIT licensed)
 src-tauri/           The native shell in Rust
   src/http.rs        Sends requests
   src/postman.rs     Postman API client
