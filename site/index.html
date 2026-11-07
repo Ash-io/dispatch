@@ -238,7 +238,7 @@ function track(event,props){ try{ window.posthog&&posthog.capture(event,props); 
         <a href="#capability">Under the hood</a>
         <a href="#getstarted">Get started</a>
       </div>
-      <a class="navcta" href="https://github.com/Roqak/dispatch/releases">Download</a>
+      <a class="navcta" href="https://github.com/Ash-io/dispatch/releases">Download</a>
     </nav>
   </div>
 </header>
@@ -252,8 +252,8 @@ function track(event,props){ try{ window.posthog&&posthog.capture(event,props); 
       <h1>Everything you use Postman for. <em>None</em> of the <span class="amber">weight</span>.</h1>
       <p class="lede">Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL. Use it on its own with a built-in local profile and <b>no account at all</b>, or connect Postman and it reads and writes your workspaces, collections and environments through <b>Postman's official API</b>, so your team keeps collaborating there.</p>
       <div class="hero-cta">
-        <a class="cta main" id="dlHero" href="https://github.com/Roqak/dispatch/releases">Download Dispatch</a>
-        <a class="cta ghost" href="https://github.com/Roqak/dispatch">View the source</a>
+        <a class="cta main" id="dlHero" href="https://github.com/Ash-io/dispatch/releases">Download Dispatch</a>
+        <a class="cta ghost" href="https://github.com/Ash-io/dispatch">View the source</a>
       </div>
       <div class="dl-switch" id="dlSwitch" hidden></div>
       <div class="hero-badge">
@@ -282,7 +282,7 @@ function track(event,props){ try{ window.posthog&&posthog.capture(event,props); 
           <button type="button" role="tab" data-os="win" aria-selected="false">Windows</button>
         </div>
         <div class="ol-box">
-          <code id="olCmd"><b>$</b> curl -fsSL https://raw.githubusercontent.com/Roqak/dispatch/main/site/install.sh | sh</code>
+          <code id="olCmd"><b>$</b> curl -fsSL https://raw.githubusercontent.com/Ash-io/dispatch/main/site/install.sh | sh</code>
           <button type="button" id="olCopy">Copy</button>
         </div>
       </div>
@@ -436,9 +436,9 @@ function track(event,props){ try{ window.posthog&&posthog.capture(event,props); 
       <h2>One download. Your entire <em>API surface</em>.</h2>
       <p class="sub">Native builds for macOS 13+, Windows 10/11 and Linux (x86_64 glibc). Auto-updates are signed, checked daily, and apply in one click.</p>
       <div class="acts">
-        <a class="dl" id="dlCard" href="https://github.com/Roqak/dispatch/releases">Get the latest release</a>
-        <a class="dl g" href="https://github.com/Roqak/dispatch">Browse the source</a>
-        <a class="dl g" href="https://github.com/Roqak/dispatch/releases">All builds &amp; versions</a>
+        <a class="dl" id="dlCard" href="https://github.com/Ash-io/dispatch/releases">Get the latest release</a>
+        <a class="dl g" href="https://github.com/Ash-io/dispatch">Browse the source</a>
+        <a class="dl g" href="https://github.com/Ash-io/dispatch/releases">All builds &amp; versions</a>
       </div>
       <div class="footfacts">
         <span><b>Auto-update</b> signed, daily check</span>
@@ -499,7 +499,7 @@ if(bench){
   var box=document.getElementById('oneLiner');
   if(!box) return;
   var code=document.getElementById('olCmd'), copy=document.getElementById('olCopy');
-  var base=/^https:/.test(location.protocol)?location.origin:'https://raw.githubusercontent.com/Roqak/dispatch/main/site';
+  var base=/^https:/.test(location.protocol)?location.origin:'https://raw.githubusercontent.com/Ash-io/dispatch/main/site';
   var CMDS={
     unix:{prompt:'$', cmd:'curl -fsSL '+base+'/install.sh | sh'},
     win: {prompt:'PS>', cmd:'irm '+base+'/install.ps1 | iex'}
@@ -534,16 +534,16 @@ document.addEventListener('click',function(e){
     var file=href.split('/').pop();
     var os=/\.dmg$/i.test(file)?'mac':/\.exe$|\.msi$/i.test(file)?'windows':/\.(AppImage|deb|rpm)$/i.test(file)?'linux':'other';
     track('download_click',{file:file,os:os,label:a.textContent.trim(),placement:placement});
-  } else if(/github\.com\/Roqak\/dispatch\/releases/.test(href)){
+  } else if(/github\.com\/Ash-io\/dispatch\/releases/.test(href)){
     track('releases_click',{label:a.textContent.trim(),placement:placement});
-  } else if(/github\.com\/Roqak\/dispatch\/?$/.test(href)){
+  } else if(/github\.com\/Ash-io\/dispatch\/?$/.test(href)){
     track('source_click',{label:a.textContent.trim(),placement:placement});
   }
 });
 
 // ---- download: detect OS + pick the exact asset from the latest GitHub release ----
 (function(){
-  var REPO='Roqak/dispatch', REL='https://github.com/Roqak/dispatch/releases';
+  var REPO='Ash-io/dispatch', REL='https://github.com/Ash-io/dispatch/releases';
   var hero=document.getElementById('dlHero');
   if(!hero) return;
   var card=document.getElementById('dlCard');

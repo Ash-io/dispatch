@@ -5,7 +5,7 @@
 # Linux: installs the AppImage to ~/.local/bin/dispatch plus a desktop entry.
 set -eu
 
-REPO="Roqak/dispatch"
+REPO="Ash-io/dispatch"
 API="https://api.github.com/repos/$REPO/releases?per_page=10"
 
 say() { printf '\033[1;32m==>\033[0m %s\n' "$1"; }

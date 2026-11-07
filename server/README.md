@@ -22,7 +22,7 @@ cargo build --release
 ./target/release/dispatch-server
 ```
 
-Prebuilt binaries (`dispatch-server-linux-x64`, `dispatch-server-macos-arm64/x64`, `dispatch-server-windows-x64.exe`) are attached to every [GitHub release](https://github.com/Roqak/dispatch/releases) — download and run, then add keys at `/admin/`. The deploy buttons below build from source themselves; nothing there depends on the release.
+Prebuilt binaries (`dispatch-server-linux-x64`, `dispatch-server-macos-arm64/x64`, `dispatch-server-windows-x64.exe`) are attached to every [GitHub release](https://github.com/Ash-io/dispatch/releases) — download and run, then add keys at `/admin/`. The deploy buttons below build from source themselves; nothing there depends on the release.
 
 The server listens on `127.0.0.1:8383` by default; users open Dispatch → Settings → Profiles → **Add profile** → *Dispatch server*, enter the URL and their email/password (or a pre-issued token), and everything else works like a Postman profile. The web admin panel is at `http://<host>:<port>/admin/`.
 

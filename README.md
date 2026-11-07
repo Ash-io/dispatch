@@ -16,9 +16,9 @@ Native on **macOS 13+** (Apple Silicon and Intel), **Windows** (10/11) and **Lin
 - **Profiles.** A built-in local profile keeps requests, collections and environments on this device only; any Postman account can be added as a profile with its own key, region and workspace memory. Switch from the footer in one click.
 - **Shared server (optional).** Self-hosted [`dispatch-server`](server/README.md) has its own users and roles. An admin adds one or more Postman API keys in the web admin panel and chooses who gets which workspace. People on Dispatch and people on Postman then work in the same workspaces, with no Postman account needed on the Dispatch side. Keys are encrypted on the server, secrets are redacted for viewers, deletions are admin-only, and every call is audited. Without a server URL, Dispatch behaves exactly as before. Prefer Cloudflare? Deploy the same thing to your own account in one click:
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Roqak/dispatch/tree/main/worker)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Ash-io/dispatch/tree/main/worker)
 
-<a href="https://render.com/deploy?repo=https://github.com/Roqak/dispatch"><img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render" height="32"></a> · [Railway instructions](docs/deploy-railway.md) (template-based; needs a published template)
+<a href="https://render.com/deploy?repo=https://github.com/Ash-io/dispatch"><img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render" height="32"></a> · [Railway instructions](docs/deploy-railway.md) (template-based; needs a published template)
 
 - **WebSocket.** Requests whose URL starts with `ws://`/`wss://` open a live connection instead of a one-shot send: frames stream in (with sizes), you compose and send back, and Close ends the session cleanly.
 - **Response diffing.** The response panel's Diff tab compares against saved examples, history, or another open tab — smart JSON value diffs (paths, added/removed/changed), array-order toggle, plain-text line diffs otherwise.
@@ -78,7 +78,7 @@ Measured on this machine, not copy-pasted from marketing pages. Both apps ran on
 
 ## Install
 
-Download from [Releases](https://github.com/Roqak/dispatch/releases/latest):
+Download from [Releases](https://github.com/Ash-io/dispatch/releases/latest):
 
 | Platform | File | Notes |
 |---|---|---|

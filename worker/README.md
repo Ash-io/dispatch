@@ -1,6 +1,6 @@
 # dispatch-server on Cloudflare Workers
 
-The [Deploy to Cloudflare button](https://deploy.workers.cloudflare.com/?url=https://github.com/Roqak/dispatch/tree/main/worker) deploys this Worker and its D1 database, and prompts for the secrets. Set `SECRET_KEY` to at least 32 random characters (`openssl rand -hex 32`): it encrypts the Postman keys you add in the panel. Leave `ADMIN_PASSWORD` as anything strong: it's only used when `REQUIRE_AUTH` is `"false"`. Manual deployment is below.
+The [Deploy to Cloudflare button](https://deploy.workers.cloudflare.com/?url=https://github.com/Ash-io/dispatch/tree/main/worker) deploys this Worker and its D1 database, and prompts for the secrets. Set `SECRET_KEY` to at least 32 random characters (`openssl rand -hex 32`): it encrypts the Postman keys you add in the panel. Leave `ADMIN_PASSWORD` as anything strong: it's only used when `REQUIRE_AUTH` is `"false"`. Manual deployment is below.
 
 This folder must stay self-contained, because the button treats it as the root of a new repository. Nothing in it can point outside `worker/`.
 

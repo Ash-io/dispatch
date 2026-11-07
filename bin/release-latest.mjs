@@ -58,7 +58,7 @@ for (let i = 0; i < pairs.length; i += 2) {
   }
   const name = path.basename(artifact);
   const tag = `v${version}`;
-  const url = `https://github.com/Roqak/dispatch/releases/download/${tag}/${encodeURIComponent(name)}`;
+  const url = `https://github.com/Ash-io/dispatch/releases/download/${tag}/${encodeURIComponent(name)}`;
   const entry = { signature: fs.readFileSync(sigFile, 'utf8').trim(), url };
   for (const k of aliases(key)) platforms[k] = entry;
 }
