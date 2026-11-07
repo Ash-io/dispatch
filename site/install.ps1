@@ -2,7 +2,7 @@
 #   irm https://<site>/install.ps1 | iex
 # Downloads the latest x64 setup.exe and runs it silently.
 $ErrorActionPreference = 'Stop'
-$repo = 'Roqak/dispatch'
+$repo = 'Ash-io/dispatch'
 
 Write-Host '==> Finding the latest Dispatch release for Windows' -ForegroundColor Green
 $releases = Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=10" -Headers @{ Accept = 'application/vnd.github+json' }

@@ -204,7 +204,7 @@ export function saveAsDialog(defaultName) {
 // ---------- Postman API key help ----------
 
 const API_KEYS_URL = 'https://go.postman.co/settings/me/api-keys';
-const KEY_GUIDE_URL = 'https://github.com/Roqak/dispatch/blob/main/docs/postman-api-key.md';
+const KEY_GUIDE_URL = 'https://github.com/Ash-io/dispatch/blob/main/docs/postman-api-key.md';
 const openLink = (url) => bridge.openUrl(url).catch(() => { navigator.clipboard.writeText(url); toast(`Couldn't open your browser, so the link is on your clipboard: ${url}`); });
 
 /** Steps for creating a Postman API key, with a button to Postman's API keys page. */
