@@ -74,6 +74,7 @@
           <li>Choose who gets which workspace. Changes sync both ways, so people on Postman and on Dispatch share the same work.</li>
         </ol>
         <button class="btn primary" id="account-add-empty" type="button">Add account</button>
+        <p class="muted onboard-alt">Not using Postman? <button class="link" id="workspace-new-empty" type="button">Create a workspace on this server</button> instead. Collections and environments are then stored here.</p>
       </div>
       <div class="tablewrap" id="accounts-table">
         <table class="data-table">
@@ -100,9 +101,11 @@
         <div class="panel-tools">
           <label class="search"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.500"/><path d="M10.500 10.500 14 14"/></svg><span class="visually-hidden">Search workspaces</span><input id="workspaces-search" type="search" placeholder="Search workspaces" spellcheck="false"></label>
           <button class="icon-btn" id="workspaces-refresh" type="button" title="Refresh" aria-label="Refresh workspaces"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.500 8a5.500 5.500 0 1 1-1.600-3.900"/><path d="M13.500 2v3h-3"/></svg></button>
+          <button class="btn primary" id="workspace-new" type="button">New workspace</button>
         </div>
       </div>
       <div class="notice warn" id="workspaces-failed" hidden><p id="workspaces-failed-text"></p></div>
+      <p class="panel-intro muted">Workspaces come from connected Postman accounts, or are stored on this server. Ones stored here need no Postman account, and only people using Dispatch can reach them.</p>
       <div class="tablewrap">
         <table class="data-table">
           <thead>
@@ -134,8 +137,8 @@
         <button class="btn sm" id="reg-close" type="button">Turn off</button>
       </div>
       <div class="notice bad" id="key-notice" hidden>
-        <p><b>No Postman account connected.</b> People can sign in but have no workspaces to work in.</p>
-        <button class="btn sm" id="key-notice-go" type="button">Connect one</button>
+        <p><b>No workspaces yet.</b> People can sign in but have nothing to work in. Connect a Postman account, or create a workspace on this server.</p>
+        <button class="btn sm" id="key-notice-go" type="button">Add a workspace</button>
       </div>
 
       <form id="add-user-form" class="card add-user" novalidate hidden>

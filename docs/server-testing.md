@@ -1,6 +1,6 @@
 # Testing dispatch-server
 
-`tests/server-contract.mjs` checks the behaviour both servers must share: connected accounts, routing calls to the right key, roles, grants and redaction. It plays Postman itself on port 8798 with made-up keys, so it never touches a real account. Each run needs an empty database.
+`tests/server-contract.mjs` checks the behaviour both servers must share: connected accounts, routing calls to the right key, roles, grants, redaction, and workspaces stored on the server (including copying one from Postman). It plays Postman itself on port 8798 with made-up keys, so it never touches a real account. Each run needs an empty database.
 
 Rust server:
 

@@ -1,12 +1,14 @@
 # dispatch-server
 
-An optional, self-hostable backend for [Dispatch](../): it has its own users and roles, connects to **one or more Postman accounts**, and decides who reaches which workspace. One binary, SQLite, no external services. If you'd rather use your own Postman key per person, keep Dispatch standalone — the server is entirely optional.
+An optional, self-hostable backend for [Dispatch](../): it has its own users and roles, connects to **one or more Postman accounts**, can **store workspaces itself** so a team doesn't need Postman at all, and decides who reaches which workspace. One binary, SQLite, no external services. If you'd rather use your own Postman key per person, keep Dispatch standalone — the server is entirely optional.
 
 > Prefer Cloudflare? [worker/](../worker/) deploys the same API to a Cloudflare Worker (D1 database, same admin panel) with `npm run deploy:server`.
 
 ## The idea
 
 Postman stays the source of truth. Someone keeps working in Postman; you run `dispatch-server`, add a Postman API key that can reach their workspace, and grant that workspace to the people you choose. Those people point Dispatch at your server, sign in, and work in the same workspace without a Postman account or ever seeing a key. What they save appears in Postman, and what's saved in Postman appears in Dispatch on the next sync.
+
+Or leave Postman out of it. **Dispatch workspaces** are stored in the server's own database: create one in the admin panel, or copy a Postman workspace onto the server, then grant it like any other. The desktop app needs nothing new, since the server answers for them in Postman's API format. Both kinds can live on one server.
 
 Add as many keys as you need. If two keys reach the same workspace it's listed once, and if one key can only read there, writes go through the other. You decide who can do what:
 
@@ -60,7 +62,7 @@ Render: use the **Deploy to Render** button in the top-level README — [`render
 `/admin/` has these screens:
 
 - **Postman accounts:** add keys (each is checked with Postman first), rename them, replace them, remove them, and see each key's status, workspaces and API usage. Keys are never shown again after they're added.
-- **Workspaces:** every workspace any key reaches, which keys reach it, and who has access. Change access from here.
+- **Workspaces:** every workspace any key reaches and every workspace stored on the server, which keys reach each, and who has access. Change access from here, create, rename or delete workspaces stored on the server, and copy a Postman workspace onto it.
 - **Users:** create people, change their role and workspaces, reset passwords, delete them.
 - **Settings:** toggle registration.
 - **Audit log:** every proxied call and every account change, with who made it.
@@ -78,6 +80,7 @@ Requests mirror Postman's API paths, so the desktop client uses the server URL i
 - Viewers receive shared variable values only; private `currentValue`s are removed.
 - Postman responses (successes and errors) and the `x-ratelimit-remaining-month` header are passed through unchanged, so the client renders them exactly as it does Postman.
 - Every proxied call is recorded in the audit log — including who did what.
+- Calls for a workspace stored on the server never reach Postman. They answer in Postman's shapes, with the same roles, grants, redaction and audit, and every save gives the item a new `updatedAt` so the desktop app can spot conflicting edits.
 
 ## Honest limits
 
@@ -87,4 +90,8 @@ Requests mirror Postman's API paths, so the desktop client uses the server URL i
 - Postman's API rate limits attach to each key; the server caches list reads for 60 seconds, but everyone going through a key shares its quota.
 - A key can do everything its Postman user can. Whoever you grant a workspace acts as that user there, and in Postman their changes appear under that user's name; attribution lives in the server's audit log.
 - A workspace only appears here if a connected key can reach it, so someone on Postman must first share it with the key's owner, under their own plan's rules.
+- Workspaces stored on the server support collections, environments and global variables, which is what the desktop app syncs. Postman extras such as mocks, monitors, APIs and forks aren't available there.
+- Copying a Postman workspace onto the server is a one-time copy. The two don't sync afterwards, and the Postman original stays as it is until you delete it there.
+- Workspaces stored on the server live only in its database (`DB_PATH`), so back that file up.
+- When two people save the same collection, the last save wins, and the desktop app warns the person whose copy was out of date, as with Postman.
 - Serving a team through one Postman user isn't Postman's intended model — self-hosting and audit are the mitigations; evaluate your own terms.

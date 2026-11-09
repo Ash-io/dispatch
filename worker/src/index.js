@@ -14,7 +14,7 @@
 const ROLES = ["viewer", "editor", "creator", "admin"];
 const ROLE_RANK = { viewer: 0, editor: 1, creator: 2, admin: 3 };
 const RATE_LIMIT_HEADER = "x-ratelimit-remaining-month";
-const NO_ACCOUNT_MESSAGE = "This server has no Postman account connected. An admin can add one under Postman accounts in the admin panel.";
+const NO_ACCOUNT_MESSAGE = "This server has no Postman account connected and no Dispatch workspaces yet. An admin can add either in the admin panel.";
 // Per-workspace list cache for granted principals; keys are scoped per grant
 // set so two differently-granted principals never share stale views.
 const LIST_CACHE_TTL = 60_000;
@@ -896,13 +896,7 @@ async function proxy(env, request, requireAuth) {
   if (!found) return audited(fail(404, "No such Postman endpoint"));
   const { family, rest } = found;
 
-  // 3. A connected Postman account is a server-side prerequisite for proxying.
-  const creds = await connectedAccounts(env);
-  if (creds.length === 0) {
-    return audited(fail(503, NO_ACCOUNT_MESSAGE));
-  }
-
-  // 4. Role matrix.
+  // 3. Role matrix.
   const [needed, neededMsg] = minRole(family, method, rest);
   if (rankOf(principal) < needed) {
     const message = rankOf(principal) === ROLE_RANK.viewer
@@ -911,13 +905,25 @@ async function proxy(env, request, requireAuth) {
     return audited(fail(403, message));
   }
 
-  // 5. Scoping and forwarding (redaction and map upkeep happen inside).
   const bodyText = await request.text();
   let bodyJson = null;
   if (bodyText.trim()) {
     const parsed = parseJson(bodyText);
     if (parsed.ok) bodyJson = parsed.value;
   }
+
+  // 4. Dispatch workspaces live on this server and are answered here, with
+  // Postman's lists merged in where a call spans both.
+  const creds = await connectedAccounts(env);
+  const stored = await dispatchRoute(env, creds, family, method, rest, query, bodyJson, bodyText, principal);
+  if (stored) return audited(stored);
+
+  // 5. Everything else needs a connected Postman account.
+  if (creds.length === 0) {
+    return audited(fail(503, NO_ACCOUNT_MESSAGE));
+  }
+
+  // 6. Scoping and forwarding (redaction and map upkeep happen inside).
   const allowed = scopeOf(principal);
   let response;
   if (family === "collections" || family === "environments") {
@@ -955,6 +961,267 @@ async function proxy(env, request, requireAuth) {
     response = await unscopedFamilyRoute(env, creds, family, method, rest, query, bodyJson, bodyText, allowed);
   }
   return audited(response);
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch workspaces: stored in D1 instead of Postman, served through the same
+// Postman-shaped endpoints (server/src/hosted.rs is the same code in Rust).
+
+const DW_COLLECTION = "collection";
+const DW_ENVIRONMENT = "environment";
+const SCHEMA_V21 = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json";
+const DW_NOT_HERE = "This isn't available for workspaces stored on this Dispatch server";
+// D1 rows top out at 2 MB.
+const DW_MAX_BYTES = 1_900_000;
+const DW_TOO_BIG = "This is too large to store on the Cloudflare version of the server (about 2 MB each). The self-hosted server has no such limit.";
+
+const dwListKey = (kind) => (kind === DW_COLLECTION ? "collections" : "environments");
+const inReach = (allowed, workspace) => allowed === null || allowed.includes(workspace);
+
+async function dwWorkspaces(env) {
+  return dbAll(env, "SELECT id, name, globals, created_by, created_at, updated_at FROM dispatch_workspaces ORDER BY name COLLATE NOCASE, id")
+    .catch(() => []);
+}
+
+async function dwWorkspace(env, id) {
+  return dbFirst(env, "SELECT id, name, globals, created_by, created_at, updated_at FROM dispatch_workspaces WHERE id = ?", [id])
+    .catch(() => null);
+}
+
+async function dwItems(env, workspace, kind) {
+  return dbAll(env, "SELECT uid, workspace_id, name, created_at, updated_at FROM dispatch_items WHERE workspace_id = ? AND kind = ? ORDER BY name COLLATE NOCASE, uid",
+    [workspace, kind]).catch(() => []);
+}
+
+function dwEntry(item) {
+  return { id: item.uid, uid: item.uid, name: item.name, owner: "", createdAt: item.created_at, updatedAt: item.updated_at, isPublic: false };
+}
+
+function dwWorkspaceEntry(ws) {
+  return { id: ws.id, name: ws.name, type: "team", visibility: "team", dispatch: true };
+}
+
+async function dwEntriesInReach(env, kind, allowed) {
+  const out = [];
+  for (const ws of await dwWorkspaces(env)) {
+    if (inReach(allowed, ws.id)) out.push(...(await dwItems(env, ws.id, kind)).map(dwEntry));
+  }
+  return out;
+}
+
+// A stamp later than `previous`, so every save changes updatedAt (the desktop
+// app spots conflicts by comparing them).
+function stampAfter(previous) {
+  const floor = previous ? Date.parse(previous) + 1 : -Infinity;
+  return new Date(Math.max(Date.now(), Number.isNaN(floor) ? -Infinity : floor)).toISOString();
+}
+
+function assignItemIds(items) {
+  if (!Array.isArray(items)) return;
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    if (typeof item.id !== "string" || !item.id) item.id = crypto.randomUUID();
+    if (item.item) assignItemIds(item.item);
+  }
+}
+
+// Checks a create/update body and returns { name, doc } or { error }.
+function dwDocument(kind, bodyJson, uid, created, updated) {
+  const doc = bodyJson && typeof bodyJson === "object" ? bodyJson[kind] : null;
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return { error: fail(400, `The body needs a "${kind}" object`) };
+  if (kind === DW_COLLECTION) {
+    const { info: rawInfo, item: rawItems, ...others } = doc;
+    const info = rawInfo && typeof rawInfo === "object" && !Array.isArray(rawInfo) ? { ...rawInfo } : {};
+    const name = typeof info.name === "string" ? info.name.trim() : "";
+    if (!name) return { error: fail(400, "The collection needs a name (info.name)") };
+    info._postman_id = uid;
+    info.name = name;
+    if (typeof info.schema !== "string") info.schema = SCHEMA_V21;
+    info.createdAt = created;
+    info.updatedAt = updated;
+    info.uid = uid;
+    const item = Array.isArray(rawItems) ? structuredClone(rawItems) : [];
+    assignItemIds(item);
+    return { name, doc: { info, item, ...others } };
+  }
+  const name = typeof doc.name === "string" ? doc.name.trim() : "";
+  if (!name) return { error: fail(400, "The environment needs a name") };
+  const values = Array.isArray(doc.values) ? doc.values : [];
+  return { name, doc: { id: uid, name, owner: "", createdAt: created, updatedAt: updated, isPublic: false, values } };
+}
+
+function dwSummary(kind, uid, name) {
+  return jsonOut(200, { [kind]: name === undefined ? { id: uid, uid } : { id: uid, uid, name } });
+}
+
+async function dwCreate(env, kind, workspace, bodyJson) {
+  const uid = crypto.randomUUID();
+  const now = nowIso();
+  const made = dwDocument(kind, bodyJson, uid, now, now);
+  if (made.error) return made.error;
+  const text = JSON.stringify(made.doc);
+  if (text.length > DW_MAX_BYTES) return fail(413, DW_TOO_BIG);
+  try {
+    await dbRun(env, "INSERT INTO dispatch_items (uid, kind, workspace_id, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [uid, kind, workspace, made.name, text, now, now]);
+  } catch {
+    return fail(500, `Couldn't save the ${kind}`);
+  }
+  return dwSummary(kind, uid, made.name);
+}
+
+// One stored collection or environment. null when the uid isn't stored here.
+async function dwSingle(env, kind, method, rest, uid, bodyJson, allowed, viewer) {
+  const item = await dbFirst(env, "SELECT uid, workspace_id, name, body, created_at, updated_at FROM dispatch_items WHERE uid = ? AND kind = ?",
+    [uid, kind]).catch(() => null);
+  if (!item) return null;
+  if (!inReach(allowed, item.workspace_id)) {
+    return fail(403, `This ${kind} isn't in one of your workspaces — refresh your ${kind}s list first`);
+  }
+  if (rest.includes("/")) return fail(400, DW_NOT_HERE);
+  if (method === "GET" || method === "HEAD") {
+    const parsed = parseJson(item.body);
+    const doc = parsed.ok ? parsed.value : null;
+    return jsonOut(200, { [kind]: viewer && doc ? stripCurrentValues(doc) : doc });
+  }
+  if (method === "PUT") {
+    const updated = stampAfter(item.updated_at);
+    const made = dwDocument(kind, bodyJson, item.uid, item.created_at, updated);
+    if (made.error) return made.error;
+    const text = JSON.stringify(made.doc);
+    if (text.length > DW_MAX_BYTES) return fail(413, DW_TOO_BIG);
+    try {
+      await dbRun(env, "UPDATE dispatch_items SET name = ?, body = ?, updated_at = ? WHERE uid = ?", [made.name, text, updated, item.uid]);
+    } catch {
+      return fail(500, `Couldn't save the ${kind}`);
+    }
+    return dwSummary(kind, item.uid, made.name);
+  }
+  if (method === "DELETE") {
+    await dbRun(env, "DELETE FROM dispatch_items WHERE uid = ?", [item.uid]).catch(() => {});
+    return dwSummary(kind, item.uid);
+  }
+  return fail(400, DW_NOT_HERE);
+}
+
+// /workspaces/{id}…, for a Dispatch workspace. The caller has checked reach.
+async function dwWorkspaceCall(env, method, ws, rest, bodyJson) {
+  const slash = rest.indexOf("/");
+  const sub = slash === -1 ? "" : rest.slice(slash + 1);
+  const reading = method === "GET" || method === "HEAD";
+  if (reading && sub === "") {
+    const brief = async (kind) => (await dwItems(env, ws.id, kind)).map((item) => ({ id: item.uid, uid: item.uid, name: item.name }));
+    return jsonOut(200, { workspace: {
+      id: ws.id, name: ws.name, type: "team", visibility: "team", description: "",
+      createdBy: ws.created_by, createdAt: ws.created_at, updatedAt: ws.updated_at, dispatch: true,
+      collections: await brief(DW_COLLECTION), environments: await brief(DW_ENVIRONMENT),
+    } });
+  }
+  if (method === "PUT" && sub === "") {
+    const name = typeof bodyJson?.workspace?.name === "string" ? bodyJson.workspace.name.trim() : "";
+    if (!name) return fail(400, "The workspace needs a name");
+    await dbRun(env, "UPDATE dispatch_workspaces SET name = ?, updated_at = ? WHERE id = ?", [name, nowIso(), ws.id]).catch(() => {});
+    return jsonOut(200, { workspace: { id: ws.id, name } });
+  }
+  if (method === "DELETE" && sub === "") {
+    await dwDeleteWorkspace(env, ws.id);
+    return jsonOut(200, { workspace: { id: ws.id } });
+  }
+  if (reading && sub === "global-variables") {
+    const parsed = parseJson(ws.globals);
+    return jsonOut(200, { values: parsed.ok && Array.isArray(parsed.value) ? parsed.value : [] });
+  }
+  if (method === "PUT" && sub === "global-variables") {
+    if (!Array.isArray(bodyJson?.values)) return fail(400, 'The body needs a "values" array');
+    const text = JSON.stringify(bodyJson.values);
+    if (text.length > DW_MAX_BYTES) return fail(413, DW_TOO_BIG);
+    try {
+      await dbRun(env, "UPDATE dispatch_workspaces SET globals = ?, updated_at = ? WHERE id = ?", [text, nowIso(), ws.id]);
+    } catch {
+      return fail(500, "Couldn't save the global variables");
+    }
+    return jsonOut(200, { values: bodyJson.values });
+  }
+  return fail(400, DW_NOT_HERE);
+}
+
+async function dwDeleteWorkspace(env, id) {
+  const results = await env.DB.batch([
+    env.DB.prepare("DELETE FROM dispatch_items WHERE workspace_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM dispatch_workspaces WHERE id = ?").bind(id),
+  ]);
+  return (results[1]?.meta?.changes || 0) > 0;
+}
+
+// Adds Dispatch entries to a list response from Postman. If Postman failed
+// outright, the stored entries are still shown on their own.
+async function withExtra(response, key, extra) {
+  if (!extra.length) return response;
+  let value = {};
+  let rate = null;
+  if (response.ok) {
+    const parsed = parseJson(await response.text());
+    if (parsed.ok && parsed.value && typeof parsed.value === "object" && !Array.isArray(parsed.value)) value = parsed.value;
+    rate = response.headers.get(RATE_LIMIT_HEADER);
+  }
+  const list = Array.isArray(value[key]) ? value[key] : [];
+  return jsonOut(200, { ...value, [key]: [...list, ...extra] }, rate);
+}
+
+// Calls that touch a Dispatch workspace: answered from D1, or merged with
+// Postman's answer when a list spans both. null sends the call on to Postman.
+async function dispatchRoute(env, creds, family, method, rest, query, bodyJson, bodyText, principal) {
+  const allowed = scopeOf(principal);
+  const reading = method === "GET" || method === "HEAD";
+  if (family === "workspaces" && rest === "") {
+    if (!reading) return null;
+    const all = await dwWorkspaces(env);
+    if (creds.length === 0) {
+      // Nothing at all to serve yet: let the 503 explain why.
+      if (!all.length) return null;
+      return jsonOut(200, { workspaces: all.filter((ws) => inReach(allowed, ws.id)).map(dwWorkspaceEntry) });
+    }
+    const extra = all.filter((ws) => inReach(allowed, ws.id)).map(dwWorkspaceEntry);
+    return withExtra(await mergedWorkspaces(env, creds, query, allowed), "workspaces", extra);
+  }
+  if (family === "workspaces") {
+    const id = percentDecode(rest.split("/")[0]);
+    const ws = await dwWorkspace(env, id);
+    if (!ws) return null;
+    if (!inReach(allowed, id)) return fail(403, "This workspace isn't in one of your workspaces");
+    return dwWorkspaceCall(env, method, ws, rest, bodyJson);
+  }
+  if (family !== "collections" && family !== "environments") return null;
+  const kind = family === "collections" ? DW_COLLECTION : DW_ENVIRONMENT;
+  if (rest !== "") {
+    const uid = percentDecode(rest.split("/")[0]);
+    return dwSingle(env, kind, method, rest, uid, bodyJson, allowed, principal.role === "viewer");
+  }
+  if (method === "POST") {
+    const declared = bodyJson && typeof bodyJson === "object" ? findWorkspaceIn(bodyJson, query) : queryWorkspace(query);
+    const target = allowed === null ? declared : (declared !== null && allowed.includes(declared) ? declared : allowed[0] ?? null);
+    if (!target || !(await dwWorkspace(env, target))) return null;
+    return dwCreate(env, kind, target, bodyJson);
+  }
+  if (!reading) return null;
+  const requested = queryWorkspace(query);
+  if (requested) {
+    const ws = percentDecode(requested);
+    if (!(await dwWorkspace(env, ws))) return null;
+    if (!inReach(allowed, ws)) return fail(403, "This workspace isn't in one of your workspaces");
+    const items = await dwItems(env, ws, kind);
+    return jsonOut(200, { [dwListKey(kind)]: items.map(dwEntry) });
+  }
+  // No workspace named: every list in reach, from both places.
+  const stored = (await dwWorkspaces(env)).map((ws) => ws.id);
+  if (!stored.length) return null;
+  const key = dwListKey(kind);
+  const extra = await dwEntriesInReach(env, kind, allowed);
+  if (creds.length === 0) return jsonOut(200, { [key]: extra });
+  const response = allowed !== null
+    ? await listScoped(env, creds, family, query, allowed.filter((ws) => !stored.includes(ws)), cacheScopeOf(principal))
+    : await plainForward(env, creds, family, method, rest, query, bodyJson, bodyText, principal);
+  return withExtra(response, key, extra);
 }
 
 // ---------------------------------------------------------------------------
@@ -1457,8 +1724,160 @@ async function handleAdminWorkspaces(env, request, requireAuth) {
       byId.set(ws.id, entry);
     }
   }
-  const workspaces = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  for (const ws of await dwWorkspaces(env)) byId.set(ws.id, await dwWorkspaceJson(env, ws));
+  const workspaces = [...byId.values()].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   return jsonOut(200, { workspaces, failed_accounts: failed });
+}
+
+// ---------------------------------------------------------------------------
+// admin: Dispatch workspaces (stored on this server)
+
+async function dwWorkspaceJson(env, ws) {
+  const count = async (kind) => (await dbFirst(env, "SELECT COUNT(*) AS n FROM dispatch_items WHERE workspace_id = ? AND kind = ?", [ws.id, kind]).catch(() => null))?.n || 0;
+  return {
+    id: ws.id, name: ws.name, type: "team", accounts: [], dispatch: true,
+    collections: await count(DW_COLLECTION), environments: await count(DW_ENVIRONMENT),
+    created_by: ws.created_by ?? null, created_at: ws.created_at,
+  };
+}
+
+function workspaceNameOf(body) {
+  const name = typeof body?.name === "string" ? [...body.name.trim()].slice(0, 120).join("") : "";
+  return name || null;
+}
+
+async function dwWorkspaceResponse(env, id, status) {
+  const ws = await dwWorkspace(env, id);
+  return ws ? jsonOut(status, await dwWorkspaceJson(env, ws)) : fail(404, "No such workspace");
+}
+
+async function handleAdminDispatchCreate(env, request, requireAuth) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  if (error) return error;
+  const finish = async (resp) => {
+    await auditInsert(env, principal.userId, principal.email, "POST", "/admin/dispatch-workspaces", resp.status, "workspace_create");
+    return resp;
+  };
+  const body = await readJsonObject(request);
+  if (!body) return finish(fail(400, "Body must be valid JSON"));
+  const name = workspaceNameOf(body);
+  if (!name) return finish(fail(400, "Give the workspace a name"));
+  const id = crypto.randomUUID();
+  const now = nowIso();
+  try {
+    await dbRun(env, "INSERT INTO dispatch_workspaces (id, name, globals, created_by, created_at, updated_at) VALUES (?, ?, '[]', ?, ?, ?)",
+      [id, name, principal.email ?? "admin", now, now]);
+  } catch {
+    return finish(fail(500, "Couldn't create the workspace"));
+  }
+  return finish(await dwWorkspaceResponse(env, id, 201));
+}
+
+async function handleAdminDispatchUpdate(env, request, requireAuth, id) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  if (error) return error;
+  const path = `/admin/dispatch-workspaces/${id}`;
+  const finish = async (resp) => {
+    await auditInsert(env, principal.userId, principal.email, "PATCH", path, resp.status, "workspace_update");
+    return resp;
+  };
+  const body = await readJsonObject(request);
+  if (!body) return finish(fail(400, "Body must be valid JSON"));
+  const name = workspaceNameOf(body);
+  if (!name) return finish(fail(400, "Give the workspace a name"));
+  const result = await dbRun(env, "UPDATE dispatch_workspaces SET name = ?, updated_at = ? WHERE id = ?", [name, nowIso(), id]).catch(() => null);
+  if (!result) return finish(fail(500, "Couldn't rename the workspace"));
+  if (!result.meta?.changes) return finish(fail(404, "No such workspace"));
+  return finish(await dwWorkspaceResponse(env, id, 200));
+}
+
+async function handleAdminDispatchDelete(env, request, requireAuth, id) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  if (error) return error;
+  const path = `/admin/dispatch-workspaces/${id}`;
+  let resp;
+  try {
+    resp = (await dwDeleteWorkspace(env, id)) ? responseWithCors(204) : fail(404, "No such workspace");
+  } catch {
+    resp = fail(500, "Couldn't delete the workspace");
+  }
+  await auditInsert(env, principal.userId, principal.email, "DELETE", path, resp.status, "workspace_delete");
+  return resp;
+}
+
+// Copies a Postman workspace onto this server as a new Dispatch workspace. The
+// Postman original is left as it is.
+async function handleAdminDispatchImport(env, request, requireAuth) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  if (error) return error;
+  const finish = async (resp) => {
+    await auditInsert(env, principal.userId, principal.email, "POST", "/admin/dispatch-workspaces/import", resp.status, "workspace_import");
+    return resp;
+  };
+  const body = await readJsonObject(request);
+  if (!body) return finish(fail(400, "Body must be valid JSON"));
+  const source = typeof body.workspace_id === "string" ? body.workspace_id : "";
+  if (!source) return finish(fail(400, "Choose a Postman workspace to copy"));
+  if (await dwWorkspace(env, source)) return finish(fail(400, "This workspace is already stored on this server"));
+  const known = await dbFirst(env, "SELECT name FROM workspace_accounts WHERE workspace_id = ? LIMIT 1", [source]).catch(() => null);
+  const name = workspaceNameOf(body) || known?.name || "Imported workspace";
+
+  const creds = await connectedAccounts(env);
+  const route = await workspaceCreds(env, creds, source);
+  if (!route.length) return finish(fail(404, "No connected Postman account can reach this workspace"));
+  const get = async (path, query = "") => {
+    const upstream = await forwardToPostman(route, "GET", path, query, null);
+    if (upstream.kind === "error") throw upstream.response;
+    if (!upstreamIsSuccess(upstream)) throw upstreamResponse(upstream);
+    return upstream.value || {};
+  };
+  const id = crypto.randomUUID();
+  const statements = [];
+  try {
+    for (const [base, key, kind] of [["/collections", "collections", DW_COLLECTION], ["/environments", "environments", DW_ENVIRONMENT]]) {
+      const list = await get(base, queryWithWorkspace("", source));
+      for (const entry of list[key] || []) {
+        const uid = entry?.uid || entry?.id;
+        if (!uid) continue;
+        const doc = (await get(`${base}/${uid}`))[kind];
+        if (!doc || typeof doc !== "object") continue;
+        if (kind === DW_COLLECTION && doc.info) {
+          for (const field of ["_postman_id", "uid", "createdAt", "updatedAt", "lastUpdatedBy", "fork", "owner"]) delete doc.info[field];
+        } else {
+          for (const field of ["id", "uid", "owner", "createdAt", "updatedAt"]) delete doc[field];
+        }
+        const newUid = crypto.randomUUID();
+        const now = nowIso();
+        const made = dwDocument(kind, { [kind]: doc }, newUid, now, now);
+        if (made.error) return finish(fail(400, `A ${kind} in this workspace has no name`));
+        const text = JSON.stringify(made.doc);
+        if (text.length > DW_MAX_BYTES) return finish(fail(413, `"${made.name}" is too large to store on the Cloudflare version of the server (about 2 MB each). The self-hosted server has no such limit.`));
+        statements.push(env.DB.prepare("INSERT INTO dispatch_items (uid, kind, workspace_id, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(newUid, kind, id, made.name, text, now, now));
+      }
+    }
+  } catch (e) {
+    if (e instanceof Response) return finish(e);
+    const message = String(e?.message || e);
+    return finish(fail(502, /subrequest/i.test(message)
+      ? "This workspace has more collections than one Cloudflare request can copy. Try a paid Workers plan, or the self-hosted server."
+      : `Couldn't copy the workspace: ${message}`));
+  }
+  // Some workspaces don't offer globals; that's not a reason to stop.
+  let globals = [];
+  try {
+    const value = await get(`/workspaces/${source}/global-variables`);
+    if (Array.isArray(value.values)) globals = value.values;
+  } catch { /* none */ }
+  const now = nowIso();
+  statements.unshift(env.DB.prepare("INSERT INTO dispatch_workspaces (id, name, globals, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(id, name, JSON.stringify(globals), principal.email ?? "admin", now, now));
+  try {
+    await env.DB.batch(statements);
+  } catch (e) {
+    return finish(fail(500, `Couldn't save the copy: ${e?.message || e}`));
+  }
+  return finish(await dwWorkspaceResponse(env, id, 201));
 }
 
 // ---------------------------------------------------------------------------
@@ -1503,6 +1922,9 @@ function ensureSchema(env) {
       `CREATE TABLE IF NOT EXISTS environments_map (uid TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT, updated_at TEXT)`,
       `CREATE TABLE IF NOT EXISTS postman_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, region TEXT NOT NULL, key_ciphertext TEXT NOT NULL, key_hint TEXT NOT NULL, postman_user_id TEXT, postman_name TEXT, created_by TEXT, created_at TEXT NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS workspace_accounts (workspace_id TEXT NOT NULL, account_id INTEGER NOT NULL, name TEXT, type TEXT, PRIMARY KEY (workspace_id, account_id))`,
+      `CREATE TABLE IF NOT EXISTS dispatch_workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, globals TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS dispatch_items (uid TEXT PRIMARY KEY, kind TEXT NOT NULL, workspace_id TEXT NOT NULL, name TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS dispatch_items_workspace ON dispatch_items (workspace_id, kind)`,
       `CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, user_id INTEGER, email TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status INTEGER NOT NULL)`,
     ];
     schemaReady = env.DB.batch(ddl.map((sql) => env.DB.prepare(sql)));
@@ -1527,7 +1949,7 @@ async function route(request, env) {
     // map /admin/ → "/" and /admin/<file> → "/<file>". The admin API paths
     // (/admin/users, /admin/postman-accounts, /admin/workspaces, /admin/settings,
     // /admin/audit) are handled below, not here.
-    const isAdminApi = /^\/admin\/(users|postman-accounts|workspaces|settings|audit)/.test(path);
+    const isAdminApi = /^\/admin\/(users|postman-accounts|workspaces|dispatch-workspaces|settings|audit)/.test(path);
     if (!isAdminApi) return serveAdmin(env, request, path === "/admin/" ? "" : path.slice("/admin/".length));
     }
   }
@@ -1555,6 +1977,14 @@ async function route(request, env) {
     if (request.method === "DELETE") return handleAdminAccountsDelete(env, request, requireAuth, accountMatch[1]);
   }
   if (path === "/admin/workspaces" && request.method === "GET") return handleAdminWorkspaces(env, request, requireAuth);
+  if (path === "/admin/dispatch-workspaces" && request.method === "POST") return handleAdminDispatchCreate(env, request, requireAuth);
+  if (path === "/admin/dispatch-workspaces/import" && request.method === "POST") return handleAdminDispatchImport(env, request, requireAuth);
+  const dispatchMatch = /^\/admin\/dispatch-workspaces\/([^/]+)$/.exec(path);
+  if (dispatchMatch && dispatchMatch[1] !== "import") {
+    const id = percentDecode(dispatchMatch[1]);
+    if (request.method === "PATCH") return handleAdminDispatchUpdate(env, request, requireAuth, id);
+    if (request.method === "DELETE") return handleAdminDispatchDelete(env, request, requireAuth, id);
+  }
   if (path === "/admin/settings") {
     if (request.method === "GET") return handleAdminSettingsGet(env, request, requireAuth);
     if (request.method === "PATCH") return handleAdminSettingsPatch(env, request, requireAuth);

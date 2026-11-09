@@ -37,6 +37,9 @@ const collections = {
   'my-a': [],
   'my-b': [],
 };
+const environments = {
+  'acme-only': [{ uid: 'e-acme', id: 'e-acme', name: 'Acme env' }],
+};
 const revoked = new Set();
 const upstreamLog = [];
 
@@ -70,6 +73,9 @@ const fake = http.createServer((req, res) => {
     const wsMatch = /^\/workspaces\/([^/]+)(\/.*)?$/.exec(path);
     if (wsMatch) {
       if (!can(wsMatch[1])) return send(404, { error: { name: 'instanceNotFoundError' } });
+      if (wsMatch[2] === '/global-variables' && req.method === 'GET') {
+        return send(200, { values: [{ key: 'region', value: 'eu', enabled: true, type: 'default' }] });
+      }
       if (req.method !== 'GET' && account.readOnly.includes(wsMatch[1])) return send(403, { error: { name: 'forbiddenError' } });
       return send(200, { workspace: { id: wsMatch[1], ...workspaceInfo[wsMatch[1]] }, via: key });
     }
@@ -96,6 +102,17 @@ const fake = http.createServer((req, res) => {
       if (req.method !== 'GET' && account.readOnly.includes(ws)) return send(403, { error: { name: 'forbiddenError' } });
       if (req.method === 'PUT') return send(200, { collection: { uid: colMatch[1] }, via: key });
       return send(200, { collection: { uid: colMatch[1], info: { name: 'x' }, variable: [{ key: 'k', value: 'shared', currentValue: 'SECRET' }] }, via: key });
+    }
+    if (path === '/environments' && req.method === 'GET') {
+      const ws = url.searchParams.get('workspace');
+      if (ws && !can(ws)) return send(404, { error: { name: 'instanceNotFoundError' } });
+      return send(200, { environments: ws ? environments[ws] || [] : [] });
+    }
+    const envMatch = /^\/environments\/([^/]+)$/.exec(path);
+    if (envMatch && req.method === 'GET') {
+      const ws = Object.keys(environments).find((id) => environments[id].some((e) => e.uid === envMatch[1]));
+      if (!ws || !can(ws)) return send(404, { error: { name: 'instanceNotFoundError' } });
+      return send(200, { environment: { id: envMatch[1], name: 'Acme env', values: [{ key: 'token', value: 'shared-token', currentValue: 'SECRET', enabled: true, type: 'secret' }] } });
     }
     if (path.startsWith('/scim') || path.startsWith('/apis') || path.startsWith('/integrations')) {
       return send(200, { reached: path, via: key });
@@ -139,6 +156,69 @@ await check('with no account connected, the proxy says so', async () => {
   const r = await call('GET', '/workspaces', { token: admin });
   assert.equal(r.status, 503);
   assert.match(r.data.error, /Postman account/);
+});
+
+// Workspaces stored on the server itself, before any Postman account exists.
+let solo = null;
+await check('a Dispatch workspace works with no Postman account at all', async () => {
+  const made = await call('POST', '/admin/dispatch-workspaces', { token: admin, body: { name: 'Team API' } });
+  assert.equal(made.status, 201, made.text);
+  assert.equal(made.data.dispatch, true);
+  solo = made.data.id;
+  const list = await call('GET', '/workspaces', { token: admin });
+  assert.equal(list.status, 200, list.text);
+  assert.deepEqual(list.data.workspaces.map((w) => [w.id, w.name]), [[solo, 'Team API']]);
+  upstreamLog.length = 0;
+  const created = await call('POST', `/collections?workspace=${solo}`, { token: admin, body: { collection: { info: { name: 'Orders' }, item: [{ name: 'List', request: { method: 'GET', url: 'https://x.io' } }] } } });
+  assert.equal(created.status, 200, created.text);
+  const uid = created.data.collection.uid;
+  assert.equal(created.data.collection.name, 'Orders');
+  const one = await call('GET', `/collections/${uid}`, { token: admin });
+  assert.equal(one.data.collection.info._postman_id, uid);
+  assert.ok(one.data.collection.item[0].id, 'items get ids');
+  const listed = await call('GET', `/collections?workspace=${solo}`, { token: admin });
+  assert.deepEqual(listed.data.collections.map((c) => c.uid), [uid]);
+  assert.equal(listed.data.collections[0].updatedAt, one.data.collection.info.updatedAt);
+  assert.deepEqual(upstreamLog, [], 'nothing went to Postman');
+});
+
+await check('every save changes updatedAt, so the app can spot conflicts', async () => {
+  const uid = (await call('GET', `/collections?workspace=${solo}`, { token: admin })).data.collections[0].uid;
+  const stamps = [];
+  for (const name of ['Orders 2', 'Orders 3']) {
+    const put = await call('PUT', `/collections/${uid}`, { token: admin, body: { collection: { info: { name }, item: [] } } });
+    assert.equal(put.status, 200, put.text);
+    stamps.push((await call('GET', `/collections?workspace=${solo}`, { token: admin })).data.collections[0].updatedAt);
+  }
+  assert.ok(stamps[1] > stamps[0], `${stamps[1]} should be after ${stamps[0]}`);
+  assert.equal((await call('GET', `/collections/${uid}`, { token: admin })).data.collection.info.name, 'Orders 3');
+});
+
+await check('environments and globals are stored too', async () => {
+  const made = await call('POST', `/environments?workspace=${solo}`, { token: admin, body: { environment: { name: 'Dev', values: [{ key: 'host', value: 'dev.x.io', enabled: true, type: 'default' }] } } });
+  assert.equal(made.status, 200, made.text);
+  const uid = made.data.environment.uid;
+  const one = await call('GET', `/environments/${uid}`, { token: admin });
+  assert.equal(one.data.environment.values[0].value, 'dev.x.io');
+  const put = await call('PUT', `/environments/${uid}`, { token: admin, body: { environment: { name: 'Dev', values: [] } } });
+  assert.equal(put.status, 200, put.text);
+  const globals = await call('PUT', `/workspaces/${solo}/global-variables`, { token: admin, body: { values: [{ key: 'g', value: '1', enabled: true, type: 'default' }] } });
+  assert.equal(globals.status, 200, globals.text);
+  assert.deepEqual((await call('GET', `/workspaces/${solo}/global-variables`, { token: admin })).data.values.map((v) => v.key), ['g']);
+  const ws = await call('GET', `/workspaces/${solo}`, { token: admin });
+  assert.equal(ws.data.workspace.collections.length, 1);
+  assert.equal(ws.data.workspace.environments.length, 1);
+});
+
+await check('bad bodies are refused', async () => {
+  assert.equal((await call('POST', `/collections?workspace=${solo}`, { token: admin, body: { collection: { info: {} } } })).status, 400);
+  assert.equal((await call('POST', `/environments?workspace=${solo}`, { token: admin, body: {} })).status, 400);
+});
+
+await check('deleting the last Dispatch workspace brings the 503 back', async () => {
+  assert.equal((await call('DELETE', `/admin/dispatch-workspaces/${solo}`, { token: admin })).status, 204);
+  assert.equal((await call('GET', '/workspaces', { token: admin })).status, 503);
+  assert.equal((await call('DELETE', `/admin/dispatch-workspaces/${solo}`, { token: admin })).status, 404);
 });
 
 await check('a key Postman rejects is refused and not stored', async () => {
@@ -387,6 +467,77 @@ await check('only admins can touch accounts', async () => {
     assert.equal((await call('DELETE', `/admin/postman-accounts/${accountA}`, { token })).status, 403);
   }
   assert.equal((await call('GET', '/admin/postman-accounts')).status, 401);
+});
+
+// Dispatch workspaces next to Postman ones.
+let mixed = null;
+await check('Dispatch and Postman workspaces are listed together', async () => {
+  const made = await call('POST', '/admin/dispatch-workspaces', { token: admin, body: { name: 'In-house' } });
+  assert.equal(made.status, 201, made.text);
+  mixed = made.data.id;
+  await call('POST', `/collections?workspace=${mixed}`, { token: admin, body: { collection: { info: { name: 'House' }, item: [] } } });
+  const r = await call('GET', '/workspaces', { token: admin });
+  assert.ok(ids(r).includes(mixed));
+  assert.ok(ids(r).includes('acme-only'));
+  const all = await call('GET', '/collections', { token: admin });
+  const names = all.data.collections.map((c) => c.name);
+  assert.ok(names.includes('House'), names.join());
+  assert.ok(all.data.collections.some((c) => c.uid === 'c-acme'));
+  const admins = await call('GET', '/admin/workspaces', { token: admin });
+  const entry = admins.data.workspaces.find((w) => w.id === mixed);
+  assert.equal(entry.dispatch, true);
+  assert.equal(entry.collections, 1);
+});
+
+await check('grants and roles apply to Dispatch workspaces', async () => {
+  const before = await call('GET', '/workspaces', { token: viewer.token });
+  assert.ok(!ids(before).includes(mixed));
+  assert.equal((await call('GET', `/collections?workspace=${mixed}`, { token: viewer.token })).status, 403);
+  const uid = (await call('GET', `/collections?workspace=${mixed}`, { token: admin })).data.collections[0].uid;
+  assert.equal((await call('GET', `/collections/${uid}`, { token: viewer.token })).status, 403);
+  assert.equal((await call('PATCH', `/admin/users/${viewer.id}`, { token: admin, body: { workspace_grants: ['shared', mixed] } })).status, 200);
+  const after = await call('GET', '/workspaces', { token: viewer.token });
+  assert.deepEqual(ids(after), [mixed, 'shared'].sort());
+  assert.equal((await call('GET', `/collections/${uid}`, { token: viewer.token })).status, 200);
+  const write = await call('PUT', `/collections/${uid}`, { token: viewer.token, body: { collection: { info: { name: 'x' } } } });
+  assert.equal(write.status, 403);
+  const listed = await call('GET', '/collections', { token: viewer.token });
+  assert.ok(listed.data.collections.some((c) => c.uid === uid));
+  assert.equal((await call('DELETE', `/collections/${uid}`, { token: creatorAll.token })).status, 403);
+});
+
+await check('a Postman workspace can be copied onto the server', async () => {
+  upstreamLog.length = 0;
+  const r = await call('POST', '/admin/dispatch-workspaces/import', { token: admin, body: { workspace_id: 'acme-only' } });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(r.data.name, 'Acme internal');
+  assert.equal(r.data.collections, 1);
+  assert.equal(r.data.environments, 1);
+  assert.ok(upstreamLog.every((u) => u.method === 'GET'), 'the import only reads from Postman');
+  const copy = r.data.id;
+  const cols = await call('GET', `/collections?workspace=${copy}`, { token: admin });
+  assert.notEqual(cols.data.collections[0].uid, 'c-acme');
+  const envs = await call('GET', `/environments?workspace=${copy}`, { token: admin });
+  assert.equal(envs.data.environments[0].name, 'Acme env');
+  assert.deepEqual((await call('GET', `/workspaces/${copy}/global-variables`, { token: admin })).data.values.map((v) => v.key), ['region']);
+  assert.equal((await call('PATCH', `/admin/users/${viewer.id}`, { token: admin, body: { workspace_grants: [copy] } })).status, 200);
+  const env = await call('GET', `/environments/${envs.data.environments[0].uid}`, { token: viewer.token });
+  assert.equal(env.status, 200, env.text);
+  assert.ok(!env.text.includes('SECRET'), 'viewers lose current values here too');
+  assert.ok(env.text.includes('shared-token'));
+  const audit = await call('GET', '/admin/audit?limit=100', { token: admin });
+  assert.ok(audit.data.some((row) => row.action === 'workspace_import' && row.status === 201));
+});
+
+await check('only admins manage Dispatch workspaces', async () => {
+  for (const token of [viewer.token, editor.token, creatorAll.token]) {
+    assert.equal((await call('POST', '/admin/dispatch-workspaces', { token, body: { name: 'x' } })).status, 403);
+    assert.equal((await call('PATCH', `/admin/dispatch-workspaces/${mixed}`, { token, body: { name: 'x' } })).status, 403);
+    assert.equal((await call('DELETE', `/admin/dispatch-workspaces/${mixed}`, { token })).status, 403);
+  }
+  const renamed = await call('PATCH', `/admin/dispatch-workspaces/${mixed}`, { token: admin, body: { name: 'Renamed' } });
+  assert.equal(renamed.status, 200, renamed.text);
+  assert.equal(renamed.data.name, 'Renamed');
 });
 
 await check('the admin panel is still served', async () => {

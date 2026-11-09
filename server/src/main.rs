@@ -10,6 +10,7 @@ mod admin;
 mod auth;
 mod config;
 mod db;
+mod hosted;
 mod proxy;
 
 use std::collections::HashMap;
@@ -100,6 +101,9 @@ pub fn router(state: std::sync::Arc<AppState>) -> Router {
         .route("/admin/postman-accounts", get(admin::accounts_list).post(admin::accounts_create))
         .route("/admin/postman-accounts/{id}", patch(admin::accounts_update).delete(admin::accounts_delete))
         .route("/admin/workspaces", get(admin::workspaces_list))
+        .route("/admin/dispatch-workspaces", post(admin::dispatch_create))
+        .route("/admin/dispatch-workspaces/import", post(admin::dispatch_import))
+        .route("/admin/dispatch-workspaces/{id}", patch(admin::dispatch_update).delete(admin::dispatch_delete))
         .route("/admin/settings", get(admin::settings_get).patch(admin::settings_patch))
         .route("/admin/audit", get(admin::audit_list))
         .route("/admin", get(admin::panel_redirect))

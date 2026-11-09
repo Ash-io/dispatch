@@ -40,6 +40,7 @@ Local state lives in `.wrangler/` (gitignored). If a request answers `Server dat
 ## Behavior notes
 
 - Everything from the binary contract carries over: roles `viewer < editor < creator < admin`, workspace grants, admin-only deletes, secret redaction for viewers, audit log, verbatim Postman passthrough, `/admin/` panel — including its login (the same `POST /auth/login` / `POST /auth/admin-login` endpoints).
+- Workspaces stored on the server (no Postman account needed) work the same as with the binary. D1 caps a row at about 2 MB, so a single collection, environment or set of global variables larger than that is refused with a clear error; the binary has no such limit. Copying a Postman workspace makes one subrequest per collection and environment, so large workspaces need a paid Workers plan. Back up the D1 database (`npx wrangler d1 export`).
 - Passwords are PBKDF2-SHA256 (native WebCrypto) instead of argon2 because Workers' CPU budget can't run argon2; `PBKDF2_ITERATIONS` raises the rounds on paid plans.
 - Postman's API rate limits attach to each key, and list merges fan out per connected account and per granted workspace — the free plan's 50-subrequests-per-request cap matters if you connect many accounts or grant many workspaces. Heavy use wants a paid Workers plan.
 - Register/login behave identically to the binary (first registered user becomes admin); admin user management, settings and the audit log live in the same `/admin/` panel.
