@@ -102,6 +102,27 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             type TEXT,
             PRIMARY KEY (workspace_id, account_id)
         );
+        -- Workspaces stored on this server instead of in Postman. The desktop app
+        -- reaches them through the same Postman-shaped endpoints.
+        CREATE TABLE IF NOT EXISTS dispatch_workspaces (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            globals TEXT NOT NULL,
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        -- Their collections and environments; body is the full JSON document.
+        CREATE TABLE IF NOT EXISTS dispatch_items (
+            uid TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            workspace_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS dispatch_items_workspace ON dispatch_items (workspace_id, kind);
         CREATE TABLE IF NOT EXISTS audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
@@ -120,17 +141,56 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
 /// RFC 3339 UTC timestamp for the current moment, e.g. "2026-11-03T20:42:07.123Z".
 pub fn now_iso() -> String {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    let secs = now.as_secs() as i64;
+    iso_from_millis(now.as_millis() as i64)
+}
+
+fn now_millis() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64
+}
+
+pub fn iso_from_millis(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
     let days = secs.div_euclid(86_400);
     let time_of_day = secs.rem_euclid(86_400);
     let (y, m, d) = civil_from_days(days);
     format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{}Z",
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z",
         time_of_day / 3600,
         (time_of_day % 3600) / 60,
         time_of_day % 60,
-        format!("{:03}", now.subsec_millis())
+        ms.rem_euclid(1000)
     )
+}
+
+/// Parses the timestamps now_iso() writes (and JS's toISOString()).
+pub fn millis_from_iso(text: &str) -> Option<i64> {
+    let b = text.as_bytes();
+    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let num = |from: usize, to: usize| text.get(from..to)?.parse::<i64>().ok();
+    let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+    let (h, mi, s) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
+    let ms = if b[19] == b'.' { num(20, 23).unwrap_or(0) } else { 0 };
+    Some(((days_from_civil(y, mo, d) * 24 + h) * 60 + mi) * 60_000 + s * 1000 + ms)
+}
+
+/// A stamp later than `previous`, so every save of a Dispatch workspace item
+/// changes its updatedAt (the desktop app spots conflicts by comparing them).
+pub fn stamp_after(previous: Option<&str>) -> String {
+    let floor = previous.and_then(millis_from_iso).map_or(i64::MIN, |ms| ms + 1);
+    iso_from_millis(now_millis().max(floor))
+}
+
+/// (year, month, day) → days since 1970-01-01; Hinnant's days-from-civil.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 /// Days since 1970-01-01 → (year, month, day); Hinnant's civil-from-days.
@@ -490,6 +550,138 @@ pub fn workspace_count(conn: &Connection, account_id: i64) -> Result<i64, rusqli
     )
 }
 
+// ---------- Dispatch workspaces (stored on this server) ----------------------
+
+pub struct DispatchWorkspace {
+    pub id: String,
+    pub name: String,
+    pub globals: String,
+    pub created_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub struct DispatchItem {
+    pub uid: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub body: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+const DW_COLS: &str = "id, name, globals, created_by, created_at, updated_at";
+
+fn dw_from_row(row: &rusqlite::Row) -> rusqlite::Result<DispatchWorkspace> {
+    Ok(DispatchWorkspace {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        globals: row.get(2)?,
+        created_by: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
+pub fn dispatch_workspaces(conn: &Connection) -> Result<Vec<DispatchWorkspace>, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!("SELECT {DW_COLS} FROM dispatch_workspaces ORDER BY name COLLATE NOCASE, id"))?;
+    let rows = stmt.query_map([], dw_from_row)?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn dispatch_workspace(conn: &Connection, id: &str) -> Result<Option<DispatchWorkspace>, rusqlite::Error> {
+    conn.query_row(&format!("SELECT {DW_COLS} FROM dispatch_workspaces WHERE id = ?1"), params![id], dw_from_row)
+        .optional()
+}
+
+pub fn insert_dispatch_workspace(conn: &Connection, id: &str, name: &str, created_by: Option<&str>) -> Result<(), rusqlite::Error> {
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO dispatch_workspaces (id, name, globals, created_by, created_at, updated_at) VALUES (?1, ?2, '[]', ?3, ?4, ?4)",
+        params![id, name, created_by, now],
+    )?;
+    Ok(())
+}
+
+pub fn rename_dispatch_workspace(conn: &Connection, id: &str, name: &str) -> Result<bool, rusqlite::Error> {
+    Ok(conn.execute(
+        "UPDATE dispatch_workspaces SET name = ?1, updated_at = ?2 WHERE id = ?3",
+        params![name, now_iso(), id],
+    )? > 0)
+}
+
+pub fn set_dispatch_globals(conn: &Connection, id: &str, globals: &str) -> Result<bool, rusqlite::Error> {
+    Ok(conn.execute(
+        "UPDATE dispatch_workspaces SET globals = ?1, updated_at = ?2 WHERE id = ?3",
+        params![globals, now_iso(), id],
+    )? > 0)
+}
+
+/// Removes a workspace with everything in it.
+pub fn delete_dispatch_workspace(conn: &Connection, id: &str) -> Result<bool, rusqlite::Error> {
+    conn.execute("DELETE FROM dispatch_items WHERE workspace_id = ?1", params![id])?;
+    Ok(conn.execute("DELETE FROM dispatch_workspaces WHERE id = ?1", params![id])? > 0)
+}
+
+const DI_COLS: &str = "uid, workspace_id, name, body, created_at, updated_at";
+
+fn di_from_row(row: &rusqlite::Row) -> rusqlite::Result<DispatchItem> {
+    Ok(DispatchItem {
+        uid: row.get(0)?,
+        workspace_id: row.get(1)?,
+        name: row.get(2)?,
+        body: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
+/// A workspace's collections or environments, without their bodies.
+pub fn dispatch_items(conn: &Connection, workspace_id: &str, kind: &str) -> Result<Vec<DispatchItem>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT uid, workspace_id, name, '', created_at, updated_at FROM dispatch_items \
+         WHERE workspace_id = ?1 AND kind = ?2 ORDER BY name COLLATE NOCASE, uid",
+    )?;
+    let rows = stmt.query_map(params![workspace_id, kind], di_from_row)?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn dispatch_item(conn: &Connection, uid: &str, kind: &str) -> Result<Option<DispatchItem>, rusqlite::Error> {
+    conn.query_row(
+        &format!("SELECT {DI_COLS} FROM dispatch_items WHERE uid = ?1 AND kind = ?2"),
+        params![uid, kind],
+        di_from_row,
+    )
+    .optional()
+}
+
+pub fn insert_dispatch_item(conn: &Connection, item: &DispatchItem, kind: &str) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO dispatch_items (uid, kind, workspace_id, name, body, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![item.uid, kind, item.workspace_id, item.name, item.body, item.created_at, item.updated_at],
+    )?;
+    Ok(())
+}
+
+pub fn update_dispatch_item(conn: &Connection, uid: &str, name: &str, body: &str, updated_at: &str) -> Result<bool, rusqlite::Error> {
+    Ok(conn.execute(
+        "UPDATE dispatch_items SET name = ?1, body = ?2, updated_at = ?3 WHERE uid = ?4",
+        params![name, body, updated_at, uid],
+    )? > 0)
+}
+
+pub fn delete_dispatch_item(conn: &Connection, uid: &str) -> Result<bool, rusqlite::Error> {
+    Ok(conn.execute("DELETE FROM dispatch_items WHERE uid = ?1", params![uid])? > 0)
+}
+
+pub fn dispatch_item_count(conn: &Connection, workspace_id: &str, kind: &str) -> Result<i64, rusqlite::Error> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM dispatch_items WHERE workspace_id = ?1 AND kind = ?2",
+        params![workspace_id, kind],
+        |row| row.get(0),
+    )
+}
+
 pub fn audit_insert(
     conn: &Connection,
     ts: &str,
@@ -546,4 +738,48 @@ pub fn audit_json(rows: &[AuditRow]) -> Value {
             })
             .collect(),
     )
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timestamps_round_trip() {
+        for ms in [0_i64, 1_699_999_999_123, 1_762_560_000_000, 951_782_400_999] {
+            let text = iso_from_millis(ms);
+            assert_eq!(millis_from_iso(&text), Some(ms), "{text}");
+        }
+        assert_eq!(iso_from_millis(1_762_560_000_005), "2025-11-08T00:00:00.005Z");
+        assert_eq!(millis_from_iso("2025-11-08T00:00:00Z"), Some(1_762_560_000_000));
+        assert_eq!(millis_from_iso("yesterday"), None);
+    }
+
+    #[test]
+    fn stamps_always_move_forward() {
+        let future = iso_from_millis(now_millis() + 60_000);
+        let next = stamp_after(Some(&future));
+        assert_eq!(millis_from_iso(&next), millis_from_iso(&future).map(|ms| ms + 1));
+        assert!(stamp_after(None) <= stamp_after(None));
+    }
+
+    #[test]
+    fn dispatch_items_store_and_list() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        insert_dispatch_workspace(&conn, "w", "Team", None).unwrap();
+        let item = DispatchItem {
+            uid: "u".into(),
+            workspace_id: "w".into(),
+            name: "Orders".into(),
+            body: "{}".into(),
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        };
+        insert_dispatch_item(&conn, &item, "collection").unwrap();
+        assert_eq!(dispatch_items(&conn, "w", "collection").unwrap().len(), 1);
+        assert!(dispatch_items(&conn, "w", "environment").unwrap().is_empty());
+        assert!(dispatch_item(&conn, "u", "environment").unwrap().is_none());
+        assert!(delete_dispatch_workspace(&conn, "w").unwrap());
+        assert!(dispatch_item(&conn, "u", "collection").unwrap().is_none());
+    }
 }

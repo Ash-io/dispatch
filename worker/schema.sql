@@ -56,6 +56,27 @@ CREATE TABLE IF NOT EXISTS workspace_accounts (
     type TEXT,
     PRIMARY KEY (workspace_id, account_id)
 );
+-- Workspaces stored on this server instead of in Postman. The desktop app
+-- reaches them through the same Postman-shaped endpoints.
+CREATE TABLE IF NOT EXISTS dispatch_workspaces (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    globals TEXT NOT NULL,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+-- Their collections and environments; body is the full JSON document.
+CREATE TABLE IF NOT EXISTS dispatch_items (
+    uid TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS dispatch_items_workspace ON dispatch_items (workspace_id, kind);
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,

@@ -6,7 +6,7 @@ Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL, built wit
 
 - `src/`: desktop UI in plain HTML, CSS and JS modules. There is no framework and no build step. Libraries are committed, already built, to `src/vendor/` and loaded on first use (`src/js/vendor.js`). CodeMirror is the one exception with a recipe: change `scripts/codemirror-entry.js` and run `scripts/build-codemirror.sh`.
 - `src-tauri/`: native shell in Rust.
-- `server/`: `dispatch-server`, a standalone Rust crate outside the Tauri workspace. It has its own users and roles, and serves the workspaces of any Postman accounts an admin connects. Postman stays the source of truth.
+- `server/`: `dispatch-server`, a standalone Rust crate outside the Tauri workspace. It has its own users and roles, and serves the workspaces of any Postman accounts an admin connects (Postman stays the source of truth for those), plus Dispatch workspaces stored in its own database (`server/src/hosted.rs`) for teams without Postman.
 - `worker/`: the same server API on Cloudflare Workers with D1.
 - `site/`: landing page and `install.sh` / `install.ps1`, served at https://dispatch.ashlabs.xyz.
 - `bin/dispatch.mjs`: CLI that runs collections from a terminal or CI, like Newman. It reuses the app's runner and script sandbox from `src/js/`, so changes there affect it.
@@ -31,7 +31,7 @@ For UI work without the native shell, open `src/index.html` in a browser. It run
 ## Testing
 
 - Add JS tests to `tests/core.test.mjs`. Rust tests live beside the code in `src-tauri/src/`.
-- `tests/server-contract.mjs` covers accounts, routing, roles, grants and redaction. It needs a running server, so it isn't in `npm test`: run it against both `server/` and `worker/` (`docs/server-testing.md`), and extend it when you change that behaviour. Panel changes still need checking in a browser.
+- `tests/server-contract.mjs` covers accounts, routing, roles, grants, redaction and Dispatch workspaces. It needs a running server, so it isn't in `npm test`: run it against both `server/` and `worker/` (`docs/server-testing.md`), and extend it when you change that behaviour. Panel changes still need checking in a browser.
 - JS tests don't cover the UI. Check UI changes in a browser or the running app, and say so if you couldn't.
 - Windows and macOS can't be tested from Linux. Report anything you couldn't run instead of assuming it works.
 
@@ -42,6 +42,7 @@ For UI work without the native shell, open `src/index.html` in a browser. It run
 - **Server API:** `server/` and `worker/src/index.js` implement the same contract, roles, redaction and admin API. Change both. The admin panel exists twice, in `server/admin/` and `worker/admin/`: edit both, and `npm test` fails if they differ.
 - **Deploy to Cloudflare button:** `worker/` must stay self-contained, because the button treats it as the root of a new repository. Nothing in it can point outside the folder.
 - **Account routing:** every Postman call picks its key through the workspace → account map (`workspaceCreds` / `workspace_creds`). Don't forward with "the first key" for anything a limited user can reach.
+- **Dispatch workspaces:** the desktop app talks to them through the same Postman endpoints, so `hosted.rs` and its twin in `worker/src/index.js` must answer in Postman's response shapes, apply the same roles, grants, viewer redaction and audit, and give every save a later `updatedAt` (the app detects conflicts by comparing it). If the app starts using a new Postman endpoint, add it there too, or it fails for these workspaces.
 - **Database schema:** the same tables are defined in `server/src/db.rs`, `worker/schema.sql` and the migrations in `worker/src/index.js`. Keep all three identical.
 - **Version:** bump `package.json`, `package-lock.json` (both top-level fields), `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` together. `npm ci` fails if they drift.
 

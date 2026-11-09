@@ -12,8 +12,9 @@ use serde_json::{json, Value};
 
 use crate::accounts::{self, Cred, ENV_ACCOUNT_ID};
 use crate::auth::{self, AuthUser};
-use crate::proxy;
 use crate::db;
+use crate::hosted;
+use crate::proxy;
 use crate::{error, json, lock_db, AppState};
 
 /// The vanilla-JS admin panel, embedded at build time from server/admin/.
@@ -563,8 +564,157 @@ pub async fn workspaces_list(State(state): State<Arc<AppState>>, user: AuthUser)
             }
         }
     }
+    {
+        let conn = lock_db(&state);
+        for ws in db::dispatch_workspaces(&conn).unwrap_or_default() {
+            workspaces.push(dispatch_workspace_json(&conn, &ws));
+        }
+    }
     workspaces.sort_by_key(|entry| entry["name"].as_str().unwrap_or("").to_lowercase());
     json(StatusCode::OK, &json!({ "workspaces": workspaces, "failed_accounts": failed }))
+}
+
+// ---------- Dispatch workspaces (stored on this server) ----------------------
+
+fn dispatch_workspace_json(conn: &rusqlite::Connection, ws: &db::DispatchWorkspace) -> Value {
+    let count = |kind| db::dispatch_item_count(conn, &ws.id, kind).unwrap_or(0);
+    json!({
+        "id": ws.id,
+        "name": ws.name,
+        "type": "team",
+        "accounts": [],
+        "dispatch": true,
+        "collections": count(hosted::COLLECTION),
+        "environments": count(hosted::ENVIRONMENT),
+        "created_by": ws.created_by,
+        "created_at": ws.created_at,
+    })
+}
+
+fn workspace_name(value: &Value) -> Option<String> {
+    let name: String = value.get("name")?.as_str()?.trim().chars().take(120).collect();
+    (!name.is_empty()).then_some(name)
+}
+
+fn dispatch_workspace_response(state: &AppState, id: &str, status: StatusCode) -> Response {
+    let conn = lock_db(state);
+    match db::dispatch_workspace(&conn, id) {
+        Ok(Some(ws)) => json(status, &dispatch_workspace_json(&conn, &ws)),
+        _ => error(StatusCode::NOT_FOUND, "No such workspace"),
+    }
+}
+
+pub async fn dispatch_create(State(state): State<Arc<AppState>>, user: AuthUser, body: Bytes) -> Response {
+    if let Err(resp) = admin_only(&user) {
+        return resp;
+    }
+    let response = match parse_body(&body) {
+        Err(resp) => resp,
+        Ok(value) => match workspace_name(&value) {
+            None => error(StatusCode::BAD_REQUEST, "Give the workspace a name"),
+            Some(name) => {
+                let id = hosted::new_id();
+                let inserted = {
+                    let conn = lock_db(&state);
+                    db::insert_dispatch_workspace(&conn, &id, &name, Some(&user.email))
+                };
+                match inserted {
+                    Ok(()) => dispatch_workspace_response(&state, &id, StatusCode::CREATED),
+                    Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "Couldn't create the workspace"),
+                }
+            }
+        },
+    };
+    audit_account(&state, &user, "workspace_create", "POST", "/admin/dispatch-workspaces", response)
+}
+
+pub async fn dispatch_update(
+    State(state): State<Arc<AppState>>,
+    user: AuthUser,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Response {
+    if let Err(resp) = admin_only(&user) {
+        return resp;
+    }
+    let path = format!("/admin/dispatch-workspaces/{id}");
+    let response = match parse_body(&body) {
+        Err(resp) => resp,
+        Ok(value) => match workspace_name(&value) {
+            None => error(StatusCode::BAD_REQUEST, "Give the workspace a name"),
+            Some(name) => {
+                let renamed = {
+                    let conn = lock_db(&state);
+                    db::rename_dispatch_workspace(&conn, &id, &name)
+                };
+                match renamed {
+                    Ok(true) => dispatch_workspace_response(&state, &id, StatusCode::OK),
+                    Ok(false) => error(StatusCode::NOT_FOUND, "No such workspace"),
+                    Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "Couldn't rename the workspace"),
+                }
+            }
+        },
+    };
+    audit_account(&state, &user, "workspace_update", "PATCH", &path, response)
+}
+
+pub async fn dispatch_delete(State(state): State<Arc<AppState>>, user: AuthUser, Path(id): Path<String>) -> Response {
+    if let Err(resp) = admin_only(&user) {
+        return resp;
+    }
+    let path = format!("/admin/dispatch-workspaces/{id}");
+    let deleted = {
+        let conn = lock_db(&state);
+        db::delete_dispatch_workspace(&conn, &id)
+    };
+    let response = match deleted {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => error(StatusCode::NOT_FOUND, "No such workspace"),
+        Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "Couldn't delete the workspace"),
+    };
+    audit_account(&state, &user, "workspace_delete", "DELETE", &path, response)
+}
+
+/// Copies a Postman workspace onto this server as a new Dispatch workspace.
+/// The Postman original is left as it is.
+pub async fn dispatch_import(State(state): State<Arc<AppState>>, user: AuthUser, body: Bytes) -> Response {
+    if let Err(resp) = admin_only(&user) {
+        return resp;
+    }
+    let response = dispatch_import_inner(&state, &user, &body).await;
+    audit_account(&state, &user, "workspace_import", "POST", "/admin/dispatch-workspaces/import", response)
+}
+
+async fn dispatch_import_inner(state: &Arc<AppState>, user: &AuthUser, body: &Bytes) -> Response {
+    let value = match parse_body(body) {
+        Ok(value) => value,
+        Err(resp) => return resp,
+    };
+    let Some(source) = value.get("workspace_id").and_then(Value::as_str).filter(|id| !id.is_empty()) else {
+        return error(StatusCode::BAD_REQUEST, "Choose a Postman workspace to copy");
+    };
+    if hosted::is_hosted(state, source) {
+        return error(StatusCode::BAD_REQUEST, "This workspace is already stored on this server");
+    }
+    let name = match workspace_name(&value) {
+        Some(name) => name,
+        None => {
+            let conn = lock_db(state);
+            let known: Option<String> = conn
+                .query_row("SELECT name FROM workspace_accounts WHERE workspace_id = ?1 LIMIT 1", [source], |row| row.get(0))
+                .ok();
+            known.unwrap_or_else(|| "Imported workspace".to_string())
+        }
+    };
+    let copy = match proxy::fetch_workspace_copy(state, source).await {
+        Ok(copy) => copy,
+        Err(resp) => return resp,
+    };
+    let id = hosted::new_id();
+    if let Err(message) = hosted::store_import(state, &id, &name, &user.email, copy) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    dispatch_workspace_response(state, &id, StatusCode::CREATED)
 }
 
 // ---------- settings --------------------------------------------------------

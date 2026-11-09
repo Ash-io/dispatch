@@ -40,6 +40,8 @@
     workspacesRefresh: $("workspaces-refresh"),
     workspacesFailed: $("workspaces-failed"),
     workspacesFailedText: $("workspaces-failed-text"),
+    workspaceNew: $("workspace-new"),
+    workspaceNewEmpty: $("workspace-new-empty"),
     keyNoticeGo: $("key-notice-go"),
     addForm: $("add-user-form"),
     newEmail: $("new-email"),
@@ -77,7 +79,7 @@
   let toastTimer = null;
   let allUsers = [];
   let allAudit = [];
-  let workspaces = null; // [{ id, name, type, accounts }] once listed; null if that failed
+  let workspaces = null; // [{ id, name, type, accounts, dispatch? }] once listed; null if that failed
   let accounts = null; // connected Postman accounts once listed
   let canStoreKeys = true;
 
@@ -454,10 +456,17 @@
     renderAccounts();
   }
 
+  // Nothing to work in: no Postman account and no workspace stored here.
+  function updateKeyNotice() {
+    const noAccounts = Array.isArray(accounts) && !accounts.length;
+    const stored = Array.isArray(workspaces) && workspaces.some((w) => w.dispatch);
+    els.keyNotice.hidden = !(noAccounts && !stored);
+  }
+
   function renderAccounts() {
     const empty = !accounts.length;
     els.accountsCount.textContent = empty ? "" : String(accounts.length);
-    els.keyNotice.hidden = !empty;
+    updateKeyNotice();
     els.secretNotice.hidden = canStoreKeys;
     els.accountsEmpty.hidden = !empty;
     els.accountsTable.hidden = empty;
@@ -642,7 +651,7 @@
   els.accountAdd.addEventListener("click", addAccountDialog);
   els.accountAddEmpty.addEventListener("click", addAccountDialog);
   els.accountsRefresh.addEventListener("click", () => { loadAccounts(); loadWorkspaces(); });
-  els.keyNoticeGo.addEventListener("click", () => switchTab("accounts"));
+  els.keyNoticeGo.addEventListener("click", () => switchTab("workspaces"));
 
   /* ---- workspaces ---- */
 
@@ -663,6 +672,7 @@
       : "";
     renderWorkspaces();
     renderUsers();
+    updateKeyNotice();
   }
 
   // People who can reach a workspace, split by how they got there.
@@ -679,7 +689,8 @@
     const shown = workspaces.filter((w) => !query || w.name.toLowerCase().includes(query));
     if (!shown.length) {
       statusRow(els.workspacesBody, 4, query ? "No workspaces match that search."
-        : accounts && accounts.length ? "These Postman accounts have no workspaces yet." : "Connect a Postman account to see its workspaces.");
+        : accounts && accounts.length ? "These Postman accounts have no workspaces yet. You can also create one on this server."
+          : "No workspaces yet. Create one on this server, or connect a Postman account to see its workspaces.");
       return;
     }
     for (const workspace of shown) {
@@ -687,12 +698,14 @@
       const name = labeledCell("Workspace");
       const wrap = el("span");
       wrap.appendChild(el("span", "acc-name", workspace.name));
-      if (workspace.type) wrap.appendChild(el("span", "acc-sub", workspace.type === "personal" ? "Personal" : workspace.type === "team" ? "Team" : workspace.type));
+      if (workspace.dispatch) wrap.appendChild(el("span", "acc-sub", contentsText(workspace)));
+      else if (workspace.type) wrap.appendChild(el("span", "acc-sub", workspace.type === "personal" ? "Personal" : workspace.type === "team" ? "Team" : workspace.type));
       name.appendChild(wrap);
       row.appendChild(name);
 
       const through = labeledCell("Through");
       const pills = el("span");
+      if (workspace.dispatch) pills.appendChild(el("span", "pill pill-server", "This server"));
       for (const account of workspace.accounts) pills.appendChild(el("span", "pill", account.label));
       through.appendChild(pills);
       row.appendChild(through);
@@ -710,6 +723,22 @@
       manage.type = "button";
       manage.addEventListener("click", () => workspaceAccessDialog(workspace));
       wrapBtn.appendChild(manage);
+      if (workspace.dispatch) {
+        const rename = el("button", "btn sm", "Rename");
+        rename.type = "button";
+        rename.addEventListener("click", () => renameWorkspaceDialog(workspace));
+        wrapBtn.appendChild(rename);
+        const remove = el("button", "btn sm danger-ghost", "Delete");
+        remove.type = "button";
+        remove.addEventListener("click", () => deleteWorkspaceDialog(workspace));
+        wrapBtn.appendChild(remove);
+      } else {
+        const copy = el("button", "btn sm", "Copy to server");
+        copy.type = "button";
+        copy.title = "Store a copy of this workspace on this server";
+        copy.addEventListener("click", () => importWorkspaceDialog(workspace));
+        wrapBtn.appendChild(copy);
+      }
       actions.appendChild(wrapBtn);
       row.appendChild(actions);
       els.workspacesBody.appendChild(row);
@@ -758,6 +787,105 @@
     });
   }
 
+  const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
+
+  function contentsText(workspace) {
+    return "Stored here · " + plural(workspace.collections || 0, "collection", "collections") + ", "
+      + plural(workspace.environments || 0, "environment", "environments");
+  }
+
+  function textInput(value, placeholder) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value || "";
+    input.maxLength = 120;
+    if (placeholder) input.placeholder = placeholder;
+    return input;
+  }
+
+  function newWorkspaceDialog() {
+    const input = textInput("", "Payments API");
+    return openDialog({
+      title: "New workspace on this server",
+      okLabel: "Create workspace",
+      body: [
+        field("Name", input, "workspace-new-name"),
+        el("p", "field-help", "Its collections, environments and global variables are stored in this server's database, not in Postman. Give people access after it's created."),
+      ],
+      onSubmit: async () => {
+        const name = input.value.trim();
+        if (!name) return { error: "Give the workspace a name." };
+        const result = await api("/admin/dispatch-workspaces", { method: "POST", body: { name } });
+        if (!result.ok) return { error: result.error };
+        toastOk("Created " + result.data.name + ".");
+        if (els.panels.workspaces.hidden) switchTab("workspaces");
+        await loadWorkspaces();
+        return null;
+      },
+    });
+  }
+
+  function renameWorkspaceDialog(workspace) {
+    const input = textInput(workspace.name);
+    return openDialog({
+      title: "Rename " + workspace.name,
+      okLabel: "Save",
+      body: [field("Name", input, "workspace-rename")],
+      onSubmit: async () => {
+        const name = input.value.trim();
+        if (!name) return { error: "Give the workspace a name." };
+        const result = await api("/admin/dispatch-workspaces/" + encodeURIComponent(workspace.id), { method: "PATCH", body: { name } });
+        if (!result.ok) return { error: result.error };
+        toastOk("Renamed to " + result.data.name + ".");
+        await loadWorkspaces();
+        return null;
+      },
+    });
+  }
+
+  function deleteWorkspaceDialog(workspace) {
+    return openDialog({
+      title: "Delete " + workspace.name + "?",
+      okLabel: "Delete workspace",
+      danger: true,
+      body: [el("p", "dialog-text muted", "This permanently deletes its " + plural(workspace.collections || 0, "collection", "collections")
+        + " and " + plural(workspace.environments || 0, "environment", "environments") + " from this server, for everyone. It can't be undone. Copies already open in someone's desktop app stay on their device.")],
+      onSubmit: async () => {
+        const result = await api("/admin/dispatch-workspaces/" + encodeURIComponent(workspace.id), { method: "DELETE" });
+        if (!result.ok) return { error: result.error };
+        toastOk("Deleted " + workspace.name + ".");
+        await loadWorkspaces();
+        return null;
+      },
+    });
+  }
+
+  function importWorkspaceDialog(workspace) {
+    const input = textInput(workspace.name);
+    return openDialog({
+      title: "Copy " + workspace.name + " to this server",
+      okLabel: "Copy workspace",
+      body: [
+        field("Name for the copy", input, "workspace-import-name"),
+        el("p", "field-help", "Copies its collections, environments and global variables into a new workspace stored on this server. Nothing changes in Postman, and the two don't sync afterwards. Give people access to the copy once it's made."),
+      ],
+      onSubmit: async () => {
+        const name = input.value.trim();
+        if (!name) return { error: "Give the copy a name." };
+        els.dialogOk.textContent = "Copying…";
+        const result = await api("/admin/dispatch-workspaces/import", { method: "POST", body: { workspace_id: workspace.id, name } });
+        els.dialogOk.textContent = "Copy workspace";
+        if (!result.ok) return { error: result.error };
+        toastOk("Copied " + plural(result.data.collections, "collection", "collections") + " and "
+          + plural(result.data.environments, "environment", "environments") + " into " + result.data.name + ".");
+        await loadWorkspaces();
+        return null;
+      },
+    });
+  }
+
+  els.workspaceNew.addEventListener("click", newWorkspaceDialog);
+  els.workspaceNewEmpty.addEventListener("click", newWorkspaceDialog);
   els.workspacesSearch.addEventListener("input", renderWorkspaces);
   els.workspacesRefresh.addEventListener("click", () => { loadUsers(); loadWorkspaces(); });
 

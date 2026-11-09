@@ -12,6 +12,7 @@ use axum::response::Response;
 use serde_json::{json, Value};
 
 use crate::accounts::{self, Cred};
+use crate::hosted;
 use crate::auth::{rank, token_principal};
 use crate::db;
 use crate::{error, json, lock_cache, lock_db, AppState, CachedList, LIST_CACHE_TTL};
@@ -271,19 +272,7 @@ async fn handle(
         return (error(StatusCode::NOT_FOUND, "No such Postman endpoint"), who);
     };
 
-    // 3. A connected Postman account is a server-side prerequisite for proxying.
-    let creds = accounts::connected(state);
-    if creds.is_empty() {
-        return (
-            error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "This server has no Postman account connected. An admin can add one under Postman accounts in the admin panel.",
-            ),
-            who,
-        );
-    }
-
-    // 4. Role matrix.
+    // 3. Role matrix.
     let (needed, needed_msg) = min_role(family, method, rest);
     if principal.rank() < needed {
         let message = if principal.rank() == rank("viewer") {
@@ -296,7 +285,25 @@ async fn handle(
         return (error(StatusCode::FORBIDDEN, message), who);
     }
 
-    // 5. Scoping and forwarding (redaction and map upkeep happen inside).
+    // 4. Dispatch workspaces live on this server and are answered here, with
+    // Postman's lists merged in where a call spans both.
+    let creds = accounts::connected(state);
+    if let Some(response) = dispatch_route(state, &creds, family, method, rest, query, &body, &principal).await {
+        return (response, who);
+    }
+
+    // 5. Everything else needs a connected Postman account.
+    if creds.is_empty() {
+        return (
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "This server has no Postman account connected and no Dispatch workspaces yet. An admin can add either in the admin panel.",
+            ),
+            who,
+        );
+    }
+
+    // 6. Scoping and forwarding (redaction and map upkeep happen inside).
     let response = match family {
         Family::Collections | Family::Environments => {
             scoped_or_plain(state, &creds, family, method, rest, query, &body, &principal).await
@@ -311,6 +318,150 @@ async fn handle(
         _ => unscoped_family(state, &creds, family, method, rest, query, body, &principal).await,
     };
     (response, who)
+}
+
+/// Calls that touch a Dispatch workspace: answered from the database, or merged
+/// with Postman's answer when a list spans both. None sends the call on to
+/// Postman unchanged.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_route(
+    state: &Arc<AppState>,
+    creds: &[Cred],
+    family: Family,
+    method: &Method,
+    rest: &str,
+    query: &str,
+    body: &Bytes,
+    principal: &Principal,
+) -> Option<Response> {
+    let allowed = principal.scope();
+    let reading = matches!(method.as_str(), "GET" | "HEAD");
+    match family {
+        Family::Workspaces if rest.is_empty() => {
+            if !reading {
+                return None;
+            }
+            let extra = hosted::workspace_entries(state, allowed);
+            if creds.is_empty() {
+                // Nothing at all to serve yet: let the 503 below explain why.
+                if hosted::ids(state).is_empty() {
+                    return None;
+                }
+                return Some(json(StatusCode::OK, &json!({ "workspaces": extra })));
+            }
+            let response = merged_workspaces(state, creds, query, allowed).await;
+            Some(hosted::with_extra(response, "workspaces", extra).await)
+        }
+        Family::Workspaces => {
+            let id = percent_decode(rest.split('/').next().unwrap_or(rest));
+            if !hosted::is_hosted(state, &id) {
+                return None;
+            }
+            if allowed.is_some_and(|list| !list.iter().any(|ws| *ws == id)) {
+                return Some(error(StatusCode::FORBIDDEN, "This workspace isn't in one of your workspaces"));
+            }
+            Some(hosted::workspace_call(state, method, &id, rest, body))
+        }
+        Family::Collections | Family::Environments => {
+            let kind = if family == Family::Collections { hosted::COLLECTION } else { hosted::ENVIRONMENT };
+            if !rest.is_empty() {
+                let uid = percent_decode(rest.split('/').next().unwrap_or(rest));
+                let viewer = principal.role == "viewer";
+                return hosted::single(state, kind, method, rest, &uid, body, allowed, viewer);
+            }
+            if method == Method::POST {
+                let declared = find_workspace_in(body, query);
+                let target = match allowed {
+                    Some(list) => match declared {
+                        Some(ws) if list.iter().any(|one| *one == ws) => Some(ws),
+                        _ => list.first().cloned(),
+                    },
+                    None => declared,
+                };
+                let target = target.filter(|ws| hosted::is_hosted(state, ws))?;
+                return Some(hosted::create(state, kind, &target, body));
+            }
+            if !reading {
+                return None;
+            }
+            if let Some(ws) = query_workspace(query) {
+                let ws = percent_decode(ws);
+                if !hosted::is_hosted(state, &ws) {
+                    return None;
+                }
+                if allowed.is_some_and(|list| !list.iter().any(|one| *one == ws)) {
+                    return Some(error(StatusCode::FORBIDDEN, "This workspace isn't in one of your workspaces"));
+                }
+                return Some(hosted::list(state, kind, &ws));
+            }
+            // No workspace named: every list in reach, from both places.
+            let key = list_key(family);
+            let extra = hosted::entries_in_reach(state, kind, allowed);
+            let stored = hosted::ids(state);
+            if stored.is_empty() {
+                return None;
+            }
+            if creds.is_empty() {
+                let mut body = serde_json::Map::new();
+                body.insert(key.to_string(), Value::Array(extra));
+                return Some(json(StatusCode::OK, &Value::Object(body)));
+            }
+            let response = match allowed {
+                Some(list) => {
+                    let postman: Vec<String> = list.iter().filter(|ws| !stored.contains(ws)).cloned().collect();
+                    let (table, _, _) = dialect(family);
+                    list_scoped(state, creds, family, table, key, query, &postman).await
+                }
+                None => plain_forward(state, creds, family, method, rest, query, body, principal).await,
+            };
+            Some(hosted::with_extra(response, key, extra).await)
+        }
+        _ => None,
+    }
+}
+
+/// Everything in one Postman workspace, for the admin's "copy to this server":
+/// every collection and environment in full, plus the global variables.
+pub(crate) async fn fetch_workspace_copy(state: &Arc<AppState>, workspace: &str) -> Result<hosted::Imported, Response> {
+    let creds = accounts::connected(state);
+    let route = workspace_creds(state, &creds, workspace).await;
+    if route.is_empty() {
+        return Err(error(StatusCode::NOT_FOUND, "No connected Postman account can reach this workspace"));
+    }
+    let get = |path: String, query: String| {
+        let route = route.clone();
+        async move {
+            let upstream = forward_to_postman(state, &route, &Method::GET, &path, &query, &Bytes::new()).await?;
+            if !upstream.status.is_success() {
+                return Err(as_response(upstream, None));
+            }
+            serde_json::from_slice::<Value>(&upstream.body)
+                .map_err(|_| error(StatusCode::BAD_GATEWAY, "Postman sent something that isn't JSON"))
+        }
+    };
+    let scoped = query_with_workspace("", workspace);
+    let mut docs: [Vec<Value>; 2] = [Vec::new(), Vec::new()];
+    for (slot, (base, key, thing)) in [("/collections", "collections", "collection"), ("/environments", "environments", "environment")]
+        .into_iter()
+        .enumerate()
+    {
+        let list = get(base.to_string(), scoped.clone()).await?;
+        for entry in list.get(key).and_then(Value::as_array).into_iter().flatten() {
+            let Some(uid) = entry.get("uid").or_else(|| entry.get("id")).and_then(Value::as_str) else { continue };
+            let one = get(format!("{base}/{uid}"), String::new()).await?;
+            if let Some(doc) = one.get(thing) {
+                docs[slot].push(doc.clone());
+            }
+        }
+    }
+    // Some workspaces don't offer globals; that's not a reason to stop.
+    let globals = get(format!("/workspaces/{workspace}/global-variables"), String::new())
+        .await
+        .ok()
+        .and_then(|value| value.get("values").cloned())
+        .unwrap_or_else(|| json!([]));
+    let [collections, environments] = docs;
+    Ok(hosted::Imported { collections, environments, globals })
 }
 
 // ----- workspace → account routing ------------------------------------------
@@ -1099,7 +1250,7 @@ fn strip_current_values(body: &Bytes) -> Option<Bytes> {
     serde_json::to_vec(&value).ok().map(Bytes::from)
 }
 
-fn strip_value(value: &mut Value) {
+pub(crate) fn strip_value(value: &mut Value) {
     match value {
         Value::Object(map) => {
             let _ = map.remove("currentValue");
