@@ -182,7 +182,4 @@ Each file is its own row, so no single row holds a whole site.
 ## Decided
 
 - One site per collection.
-
-## Open questions
-
-- Should verified examples run on a schedule from the CLI (`bin/dispatch.mjs`) in CI, so "last verified" stays current without someone opening the app?
+- No scheduled verification. "Last verified" changes only when someone runs verification in the app and republishes, and the page shows that date as it is.
