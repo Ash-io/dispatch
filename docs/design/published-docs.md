@@ -122,13 +122,15 @@ Bundles upload as a list of `{ path, contentType, body }` with a size cap per fi
 
 ## Schema
 
+`collection_uid` is unique: a collection has at most one site.
+
 The same tables go in `server/src/db.rs`, `worker/schema.sql` and the migrations in `worker/src/index.js`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS docs_sites (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
-    collection_uid TEXT NOT NULL,
+    collection_uid TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     hostname TEXT UNIQUE,
     domain_status TEXT NOT NULL DEFAULT 'none',  -- none | pending | verified | failing
@@ -177,7 +179,10 @@ Each file is its own row, so no single row holds a whole site.
 2. **Proof.** Verified examples using the runner, the error table from history, `openapi.json`, and zip export.
 3. **Guides and change.** A quickstart from request chains, a changelog between versions, `llms.txt`, and branding.
 
+## Decided
+
+- One site per collection.
+
 ## Open questions
 
-- Should a site be able to combine several collections? The first release covers one.
 - Should verified examples run on a schedule from the CLI (`bin/dispatch.mjs`) in CI, so "last verified" stays current without someone opening the app?
