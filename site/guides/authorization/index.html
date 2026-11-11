@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Authorization: tokens, keys and OAuth 2.0 · Dispatch guide</title>
+<meta name="description" content="Set auth once for a whole collection, or override it on a single request.">
+<link rel="canonical" href="https://dispatch.ashlabs.xyz/guides/authorization/">
+<meta name="theme-color" content="#131614">
+<meta property="og:title" content="Authorization: tokens, keys and OAuth 2.0 · Dispatch guide">
+<meta property="og:description" content="Set auth once for a whole collection, or override it on a single request.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dispatch.ashlabs.xyz/guides/authorization/">
+<meta property="og:image" content="https://dispatch.ashlabs.xyz/img/light.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap">
+<link rel="stylesheet" href="/guides/guides.css">
+<script type="application/ld+json">[{"@context":"https://schema.org","@type":"HowTo","name":"Authorization: tokens, keys and OAuth 2.0","description":"Set auth once for a whole collection, or override it on a single request.","url":"https://dispatch.ashlabs.xyz/guides/authorization/","tool":[{"@type":"HowToTool","name":"Dispatch API client"}],"step":[{"@type":"HowToStep","position":1,"name":"Set auth on the collection","text":"Collection ⋯ › Settings, auth & variables › Authorization.","url":"https://dispatch.ashlabs.xyz/guides/authorization/#step-1"},{"@type":"HowToStep","position":2,"name":"Requests inherit it","text":"A request set to Inherit from parent uses the collection's auth.","url":"https://dispatch.ashlabs.xyz/guides/authorization/#step-2"},{"@type":"HowToStep","position":3,"name":"Override on one request","text":"Pick another type here: API Key, Basic, Digest, AWS Signature, Hawk…","url":"https://dispatch.ashlabs.xyz/guides/authorization/#step-3"},{"@type":"HowToStep","position":4,"name":"OAuth 2.0","text":"Fill in the grant, then Get new access token. Authorization code opens a real sign-in window, with PKCE.","url":"https://dispatch.ashlabs.xyz/guides/authorization/#step-4"}]},{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Dispatch","item":"https://dispatch.ashlabs.xyz/"},{"@type":"ListItem","position":2,"name":"Guides","item":"https://dispatch.ashlabs.xyz/guides/"},{"@type":"ListItem","position":3,"name":"Authorization: tokens, keys and OAuth 2.0","item":"https://dispatch.ashlabs.xyz/guides/authorization/"}]}]</script>
+</head>
+<body>
+<header><nav class="wrap"><a class="brand" href="/"><img src="/favicon.svg" alt="">Dispatch</a><div class="links"><a href="/guides/">Guides</a><a href="/postman-alternative/">vs Postman</a><a href="https://github.com/Ash-io/dispatch">Source</a><a class="cta" href="https://github.com/Ash-io/dispatch/releases/latest">Download</a></div></nav></header>
+<main class="wrap">
+<article>
+<p class="crumb"><a href="/guides/">Guides</a> / 05</p>
+<h1>Authorization: tokens, keys and OAuth 2.0</h1>
+<p class="lede">Set auth once for a whole collection, or override it on a single request.</p>
+<p>Most APIs want to know who you are. Let's set up authorisation once, and let every request use it.</p>
+<ol class="steps">
+<li id="step-1"><h2>Set auth on the collection</h2><p class="hint">Collection <b>⋯</b> › <b>Settings, auth &amp; variables</b> › <b>Authorization</b>.</p><p>The best place for auth is the collection. Open its settings, go to Authorisation, and choose the type. Here, it's a bearer token from a variable.</p></li>
+<li id="step-2"><h2>Requests inherit it</h2><p class="hint">A request set to <b>Inherit from parent</b> uses the collection's auth.</p><p>Now open any request inside. Its auth is set to inherit from parent, so it uses the collection token automatically.</p></li>
+<li id="step-3"><h2>Override on one request</h2><p class="hint">Pick another type here: <b>API Key</b>, <b>Basic</b>, <b>Digest</b>, <b>AWS Signature</b>, <b>Hawk</b>…</p><p>Need something different for one request? Pick another type. API key, basic, digest, AWS signature and Hawk are all here, computed just like Postman.</p></li>
+<li id="step-4"><h2>OAuth 2.0</h2><p class="hint">Fill in the grant, then <b>Get new access token</b>. Authorization code opens a real sign-in window, with PKCE.</p><p>For OAuth 2.0, choose the grant type, fill in the URLs and client details, then click Get new access token. The authorisation code flow opens a real sign-in window.</p></li>
+</ol>
+<p class="outro">Auth set once, used everywhere. Next, we will write scripts and tests that run around each request.</p>
+<nav class="pager"><a href="/guides/vault/"><small>Previous</small>Keep secrets in the Vault</a><a class="nx" href="/guides/scripts-tests/"><small>Next</small>Scripts and tests</a></nav>
+</article>
+</main>
+<footer class="wrap"><p>Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL. <a href="/">Home</a> · <a href="/guides/">All guides</a> · <a href="https://github.com/Ash-io/dispatch">GitHub</a></p><p class="legal">Dispatch is an independent API client that interoperates with Postman via Postman's official API. Not affiliated with Postman, Inc.</p></footer>
+</body>
+</html>
