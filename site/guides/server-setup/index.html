@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Set up a Dispatch server for your team · Dispatch guide</title>
+<meta name="description" content="Run dispatch-server on your own machine, Docker, or Cloudflare, and claim it as admin.">
+<link rel="canonical" href="https://dispatch.ashlabs.xyz/guides/server-setup/">
+<meta name="theme-color" content="#131614">
+<meta property="og:title" content="Set up a Dispatch server for your team · Dispatch guide">
+<meta property="og:description" content="Run dispatch-server on your own machine, Docker, or Cloudflare, and claim it as admin.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dispatch.ashlabs.xyz/guides/server-setup/">
+<meta property="og:image" content="https://dispatch.ashlabs.xyz/img/light.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap">
+<link rel="stylesheet" href="/guides/guides.css">
+<script type="application/ld+json">[{"@context":"https://schema.org","@type":"HowTo","name":"Set up a Dispatch server for your team","description":"Run dispatch-server on your own machine, Docker, or Cloudflare, and claim it as admin.","url":"https://dispatch.ashlabs.xyz/guides/server-setup/","tool":[{"@type":"HowToTool","name":"Dispatch API client"}],"step":[{"@type":"HowToStep","position":1,"name":"Run the server","text":"Download the binary from the release, or use Docker. It listens on port 8383.","url":"https://dispatch.ashlabs.xyz/guides/server-setup/#step-1"},{"@type":"HowToStep","position":2,"name":"Or deploy to Cloudflare","text":"Deploy to Cloudflare button in the README, or npm run deploy:server. Set a SECRET_KEY.","url":"https://dispatch.ashlabs.xyz/guides/server-setup/#step-2"},{"@type":"HowToStep","position":3,"name":"Claim it straight away","text":"Open /admin/, choose New server? Create the first account. The first account becomes admin.","url":"https://dispatch.ashlabs.xyz/guides/server-setup/#step-3"},{"@type":"HowToStep","position":4,"name":"Close registration","text":"Settings: turn off open registration. You add people yourself from now on.","url":"https://dispatch.ashlabs.xyz/guides/server-setup/#step-4"}]},{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Dispatch","item":"https://dispatch.ashlabs.xyz/"},{"@type":"ListItem","position":2,"name":"Guides","item":"https://dispatch.ashlabs.xyz/guides/"},{"@type":"ListItem","position":3,"name":"Set up a Dispatch server for your team","item":"https://dispatch.ashlabs.xyz/guides/server-setup/"}]}]</script>
+</head>
+<body>
+<header><nav class="wrap"><a class="brand" href="/"><img src="/favicon.svg" alt="">Dispatch</a><div class="links"><a href="/guides/">Guides</a><a href="/postman-alternative/">vs Postman</a><a href="https://github.com/Ash-io/dispatch">Source</a><a class="cta" href="https://github.com/Ash-io/dispatch/releases/latest">Download</a></div></nav></header>
+<main class="wrap">
+<article>
+<p class="crumb"><a href="/guides/">Guides</a> / 21</p>
+<h1>Set up a Dispatch server for your team</h1>
+<p class="lede">Run dispatch-server on your own machine, Docker, or Cloudflare, and claim it as admin.</p>
+<p>Want your whole team in Dispatch, with its own accounts and access control? Run a Dispatch server. It's one small program, and it's entirely optional.</p>
+<ol class="steps">
+<li id="step-1"><h2>Run the server</h2><p class="hint">Download the binary from the release, or use Docker. It listens on port <b>8383</b>.</p><p>Download dispatch server from the releases page and run it, or use Docker, with a volume for its database. By default it listens on port 8383.</p></li>
+<li id="step-2"><h2>Or deploy to Cloudflare</h2><p class="hint"><b>Deploy to Cloudflare</b> button in the README, or <code>npm run deploy:server</code>. Set a <b>SECRET_KEY</b>.</p><p>Prefer the cloud? The Deploy to Cloudflare button sets it up on your own Cloudflare account, with its database. Set a secret key: it encrypts the Postman keys you add later.</p></li>
+<li id="step-3"><h2>Claim it straight away</h2><p class="hint">Open <b>/admin/</b>, choose <b>New server? Create the first account</b>. The first account becomes <b>admin</b>.</p><p>Now, straight away, open /admin/, and create the first account. The first person to register becomes the admin, so do this before you share the address.</p></li>
+<li id="step-4"><h2>Close registration</h2><p class="hint"><b>Settings</b>: turn off open registration. You add people yourself from now on.</p><p>Registration is open by default. Once your team is in, or if you'd rather add people yourself, turn it off in Settings.</p></li>
+</ol>
+<p class="outro">Your server is up, and you're its admin. Next, we'll connect Postman accounts and invite your team.</p>
+<nav class="pager"><a href="/guides/postman-sync/"><small>Previous</small>Two-way sync with Postman</a><a class="nx" href="/guides/server-team-access/"><small>Next</small>Connect Postman and give your team access</a></nav>
+</article>
+</main>
+<footer class="wrap"><p>Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL. <a href="/">Home</a> · <a href="/guides/">All guides</a> · <a href="https://github.com/Ash-io/dispatch">GitHub</a></p><p class="legal">Dispatch is an independent API client that interoperates with Postman via Postman's official API. Not affiliated with Postman, Inc.</p></footer>
+</body>
+</html>

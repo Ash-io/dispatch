@@ -4,3 +4,16 @@ src-tauri/gen/
 .DS_Store
 .dev.vars
 .wrangler/
+
+# Local marketing and video assets, not part of the app
+.agents/
+skills-lock.json
+launch-video/
+product-hunt-assets/
+product-hunt-thumbnail-*.png
+tutorial-videos/build/
+tutorial-videos/shots/
+tutorial-videos/voice/
+tutorial-videos/scratch/
+tutorial-videos/thumbnail/
+tutorial-videos/node_modules/

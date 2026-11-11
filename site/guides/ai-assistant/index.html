@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The AI assistant · Dispatch guide</title>
+<meta name="description" content="Let Claude write tests from a real response, explain results, and draft requests from plain English.">
+<link rel="canonical" href="https://dispatch.ashlabs.xyz/guides/ai-assistant/">
+<meta name="theme-color" content="#131614">
+<meta property="og:title" content="The AI assistant · Dispatch guide">
+<meta property="og:description" content="Let Claude write tests from a real response, explain results, and draft requests from plain English.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dispatch.ashlabs.xyz/guides/ai-assistant/">
+<meta property="og:image" content="https://dispatch.ashlabs.xyz/img/light.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap">
+<link rel="stylesheet" href="/guides/guides.css">
+<script type="application/ld+json">[{"@context":"https://schema.org","@type":"HowTo","name":"The AI assistant","description":"Let Claude write tests from a real response, explain results, and draft requests from plain English.","url":"https://dispatch.ashlabs.xyz/guides/ai-assistant/","tool":[{"@type":"HowToTool","name":"Dispatch API client"}],"step":[{"@type":"HowToStep","position":1,"name":"Add your Anthropic key","text":"Settings › AI assistant. The key stays on your machine, in the macOS Keychain or a private file elsewhere.","url":"https://dispatch.ashlabs.xyz/guides/ai-assistant/#step-1"},{"@type":"HowToStep","position":2,"name":"Write tests from a response","text":"Response ⋯ › Write tests with AI…. Nothing changes until you accept.","url":"https://dispatch.ashlabs.xyz/guides/ai-assistant/#step-2"},{"@type":"HowToStep","position":3,"name":"Explain a response","text":"Explain this response for a plain-English summary, or why a send failed.","url":"https://dispatch.ashlabs.xyz/guides/ai-assistant/#step-3"},{"@type":"HowToStep","position":4,"name":"What gets sent","text":"The request as written: {{variables}} unfilled, credential headers redacted, and up to 30 KB of the response.","url":"https://dispatch.ashlabs.xyz/guides/ai-assistant/#step-4"}]},{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Dispatch","item":"https://dispatch.ashlabs.xyz/"},{"@type":"ListItem","position":2,"name":"Guides","item":"https://dispatch.ashlabs.xyz/guides/"},{"@type":"ListItem","position":3,"name":"The AI assistant","item":"https://dispatch.ashlabs.xyz/guides/ai-assistant/"}]}]</script>
+</head>
+<body>
+<header><nav class="wrap"><a class="brand" href="/"><img src="/favicon.svg" alt="">Dispatch</a><div class="links"><a href="/guides/">Guides</a><a href="/postman-alternative/">vs Postman</a><a href="https://github.com/Ash-io/dispatch">Source</a><a class="cta" href="https://github.com/Ash-io/dispatch/releases/latest">Download</a></div></nav></header>
+<main class="wrap">
+<article>
+<p class="crumb"><a href="/guides/">Guides</a> / 15</p>
+<h1>The AI assistant</h1>
+<p class="lede">Let Claude write tests from a real response, explain results, and draft requests from plain English.</p>
+<p>Dispatch has an optional AI assistant, powered by Claude, using your own Anthropic key. It can write tests, explain responses, and draft requests for you.</p>
+<ol class="steps">
+<li id="step-1"><h2>Add your Anthropic key</h2><p class="hint"><b>Settings</b> › <b>AI assistant</b>. The key stays on your machine, in the macOS Keychain or a private file elsewhere.</p><p>First, add your Anthropic API key under Settings, AI assistant. It is stored on your machine (the macOS Keychain, or a private file elsewhere), never in the page.</p></li>
+<li id="step-2"><h2>Write tests from a response</h2><p class="hint">Response <b>⋯</b> › <b>Write tests with AI…</b>. Nothing changes until you accept.</p><p>Send a request, then choose Write tests with AI from the response menu. Claude reads the real response, and writes tests for it. Nothing changes until you accept.</p></li>
+<li id="step-3"><h2>Explain a response</h2><p class="hint"><b>Explain this response</b> for a plain-English summary, or why a send failed.</p><p>Not sure what a response means? Choose Explain this response, and get a plain English summary. It also explains failed sends.</p></li>
+<li id="step-4"><h2>What gets sent</h2><p class="hint">The request as written: <code>{{variables}}</code> unfilled, credential headers redacted, and up to <b>30 KB</b> of the response.</p><p>What does Claude see? The request as you wrote it, with variables unfilled and credential headers removed, plus up to thirty kilobytes of the response.</p></li>
+</ol>
+<p class="outro">Your assistant, ready when you need it. Next, importing and exporting your work.</p>
+<nav class="pager"><a href="/guides/graphql/"><small>Previous</small>GraphQL with autocomplete</a><a class="nx" href="/guides/import-export/"><small>Next</small>Import, export, cURL and code</a></nav>
+</article>
+</main>
+<footer class="wrap"><p>Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL. <a href="/">Home</a> · <a href="/guides/">All guides</a> · <a href="https://github.com/Ash-io/dispatch">GitHub</a></p><p class="legal">Dispatch is an independent API client that interoperates with Postman via Postman's official API. Not affiliated with Postman, Inc.</p></footer>
+</body>
+</html>

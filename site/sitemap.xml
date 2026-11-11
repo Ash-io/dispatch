@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://dispatch.ashlabs.xyz/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/postman-alternative/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/first-request/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/collections/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/environments/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/vault/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/authorization/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/scripts-tests/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/collection-runner/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/load-testing/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/mock-servers/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/compare-environments/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/response-tools/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/websocket/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/grpc/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/graphql/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/ai-assistant/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/import-export/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/collections-in-git/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/cli-runner/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/shortcuts-and-palette/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/postman-sync/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/server-setup/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/server-team-access/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/server-workspaces/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://dispatch.ashlabs.xyz/guides/server-desktop-audit/</loc><lastmod>2026-11-11</lastmod></url>
+</urlset>

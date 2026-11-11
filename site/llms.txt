@@ -1,0 +1,64 @@
+# Dispatch
+
+> Dispatch is a native desktop API client for REST, WebSocket, gRPC and GraphQL, built with Rust and Tauri. It works on its own with a local profile and no account, can sync both ways with Postman workspaces through Postman's official API, and has an optional self-hosted team server. It runs on macOS 13+ (Apple Silicon and Intel), Windows 10/11 and Linux (x86_64, glibc), and is free to download from GitHub.
+
+Dispatch suits developers who want a lighter alternative to Postman without leaving their team's Postman workspaces, teams who want to self-host their API collections with their own users and roles, and anyone who needs gRPC, WebSocket, SSE or GraphQL in the same client as REST.
+
+Key facts:
+
+- Requests are sent from Rust, so there are no browser CORS limits. Timing shows DNS, TCP and TLS, time to first byte and download separately.
+- Opens Postman collections (v2.0, v2.1) and environments, OpenAPI 3, Swagger 2, Insomnia (v4, v5) and HAR. Exports standard Postman files.
+- Runs pre-request and post-response scripts with Postman's pm API (pm.test, pm.expect, pm.sendRequest, pm.environment and more), with chai, crypto-js and lodash bundled. Variables resolve in Postman's order.
+- Collection runner with iterations, CSV/JSON data files and run history. Load testing with up to 500 virtual users and p50/p95/p99 latency. Local mock servers from saved examples. Compare one request across two environments.
+- gRPC with server reflection or .proto files (unary and server streaming). WebSocket, Server-Sent Events and NDJSON streaming. GraphQL schema introspection, autocomplete and a schema explorer.
+- Collections can be saved as readable files for Git. A command-line runner (`node bin/dispatch.mjs run <collection>`) runs them in CI with junit and json reporters.
+- Vault: secrets referenced as {{vault:name}} never sync or export and can't be read by scripts. Secrets are stored in the macOS Keychain, or in private (0600) files on Windows and Linux.
+- Optional AI assistant using your own Anthropic API key.
+- Dispatch server (self-hosted, Rust, or on Cloudflare Workers with D1): its own users and roles (viewer, editor, creator, admin), per-workspace access, encrypted Postman API keys, viewer redaction of secret values, an audit log, and workspaces stored on the server for teams that leave Postman.
+- Measured download size, 24 Oct 2026, macOS Apple Silicon: Dispatch 0.6.1 is 8,021,760 bytes; Postman's macOS arm64 download is 206,943,275 bytes.
+- Dispatch is independent and not affiliated with Postman, Inc.
+
+## Install
+
+- [Latest release (macOS, Windows, Linux)](https://github.com/Ash-io/dispatch/releases/latest)
+- macOS / Linux: `curl -fsSL https://dispatch.ashlabs.xyz/install.sh | sh`
+- Windows (PowerShell): `irm https://dispatch.ashlabs.xyz/install.ps1 | iex`
+
+## Docs
+
+- [Home](https://dispatch.ashlabs.xyz/)
+- [Dispatch compared with Postman](https://dispatch.ashlabs.xyz/postman-alternative/): what carries over, what Dispatch adds, measured size and memory, and limits.
+- [README and full feature list](https://github.com/Ash-io/dispatch#readme)
+- [Dispatch server](https://github.com/Ash-io/dispatch/blob/main/server/README.md)
+
+## Guides
+
+- [Install Dispatch and send your first request](https://dispatch.ashlabs.xyz/guides/first-request/): Download the app, skip the sign-up, and get a real response back in under a minute.
+- [Organise requests with collections and folders](https://dispatch.ashlabs.xyz/guides/collections/): Group requests into collections and folders, share settings across them, and document them.
+- [Environments and variables](https://dispatch.ashlabs.xyz/guides/environments/): Write a request once, then point it at sandbox or production with one switch.
+- [Keep secrets in the Vault](https://dispatch.ashlabs.xyz/guides/vault/): API keys and passwords that never sync, never export, and never leak into scripts.
+- [Authorization: tokens, keys and OAuth 2.0](https://dispatch.ashlabs.xyz/guides/authorization/): Set auth once for a whole collection, or override it on a single request.
+- [Scripts and tests](https://dispatch.ashlabs.xyz/guides/scripts-tests/): Chain tokens between requests and check every response, with Postman's pm API.
+- [Run a whole collection](https://dispatch.ashlabs.xyz/guides/collection-runner/): Run every request in order, repeat it with data files, and see a pass or fail matrix.
+- [Load test an endpoint](https://dispatch.ashlabs.xyz/guides/load-testing/): Throw up to 500 virtual users at a request and watch latency, throughput and errors live.
+- [Examples and mock servers](https://dispatch.ashlabs.xyz/guides/mock-servers/): Save responses as examples, then serve them from a local mock server.
+- [Compare a request across environments](https://dispatch.ashlabs.xyz/guides/compare-environments/): Send one request to staging and production at once, and see exactly what differs.
+- [Find, filter and diff responses](https://dispatch.ashlabs.xyz/guides/response-tools/): Search a body, filter JSON with JSONPath, save examples, and diff against earlier responses.
+- [Live WebSocket connections](https://dispatch.ashlabs.xyz/guides/websocket/): Open a socket, watch frames stream in, and send messages back.
+- [Call gRPC services](https://dispatch.ashlabs.xyz/guides/grpc/): Load services by reflection or .proto files, write the message as JSON, and invoke.
+- [GraphQL with autocomplete](https://dispatch.ashlabs.xyz/guides/graphql/): Load the schema, get field suggestions and checks as you type, and explore the API.
+- [The AI assistant](https://dispatch.ashlabs.xyz/guides/ai-assistant/): Let Claude write tests from a real response, explain results, and draft requests from plain English.
+- [Import, export, cURL and code](https://dispatch.ashlabs.xyz/guides/import-export/): Bring in Postman, OpenAPI, Insomnia or HAR files, paste cURL, and turn requests into code.
+- [Keep collections in Git](https://dispatch.ashlabs.xyz/guides/collections-in-git/): Save a collection as readable files, commit it with your code, and review changes in pull requests.
+- [Run collections from the command line](https://dispatch.ashlabs.xyz/guides/cli-runner/): Run the same collections in a terminal or in CI, with reports and a proper exit code.
+- [Work faster: palette, history and cookies](https://dispatch.ashlabs.xyz/guides/shortcuts-and-palette/): Jump anywhere with the command palette, reopen past sends, and manage cookies.
+- [Two-way sync with Postman](https://dispatch.ashlabs.xyz/guides/postman-sync/): Work in the same workspaces as teammates who use Postman, in both directions.
+- [Set up a Dispatch server for your team](https://dispatch.ashlabs.xyz/guides/server-setup/): Run dispatch-server on your own machine, Docker, or Cloudflare, and claim it as admin.
+- [Connect Postman and give your team access](https://dispatch.ashlabs.xyz/guides/server-team-access/): Add Postman API keys, invite people with roles, and decide who reaches which workspace.
+- [Leave Postman: workspaces on your server](https://dispatch.ashlabs.xyz/guides/server-workspaces/): Create workspaces stored on the Dispatch server itself, or copy your Postman workspaces over.
+- [Connect the desktop app to your server](https://dispatch.ashlabs.xyz/guides/server-desktop-audit/): Sign in to your Dispatch server from the app, then follow every change in the audit log.
+
+## Optional
+
+- [Source code](https://github.com/Ash-io/dispatch)
+- [All releases](https://github.com/Ash-io/dispatch/releases)

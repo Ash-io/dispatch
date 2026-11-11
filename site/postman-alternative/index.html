@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dispatch: a lightweight, native alternative to Postman</title>
+<meta name="description" content="Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL that opens Postman collections, runs pm scripts, and can sync both ways with your Postman workspaces. Measured download and memory figures inside.">
+<link rel="canonical" href="https://dispatch.ashlabs.xyz/postman-alternative/">
+<meta name="theme-color" content="#131614">
+<meta property="og:title" content="Dispatch: a lightweight, native alternative to Postman">
+<meta property="og:description" content="Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL that opens Postman collections, runs pm scripts, and can sync both ways with your Postman workspaces. Measured download and memory figures inside.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dispatch.ashlabs.xyz/postman-alternative/">
+<meta property="og:image" content="https://dispatch.ashlabs.xyz/img/light.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap">
+<link rel="stylesheet" href="/guides/guides.css">
+<script type="application/ld+json">[{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Can I use Dispatch without a Postman account?","acceptedAnswer":{"@type":"Answer","text":"Yes. The built-in local profile keeps requests, collections and environments on your device, with no account. Postman sync is optional."}},{"@type":"Question","name":"Will my Postman collections and scripts work?","acceptedAnswer":{"@type":"Answer","text":"Dispatch imports Postman collections (v2.0 and v2.1) and environments, resolves variables in the same order as Postman, and runs pre-request and post-response scripts with the pm API, including pm.test, pm.expect, pm.sendRequest and the bundled chai, crypto-js and lodash libraries."}},{"@type":"Question","name":"Can my team keep using Postman while I use Dispatch?","acceptedAnswer":{"@type":"Answer","text":"Yes. Add your Postman account as a profile and Dispatch reads and writes your workspaces, collections, environments and globals through Postman's official API. If a collection changed in Postman since your last sync, Dispatch asks before overwriting."}},{"@type":"Question","name":"Can a team stop using Postman completely?","acceptedAnswer":{"@type":"Answer","text":"Yes. The self-hosted Dispatch server has its own users and roles, can store workspaces in its own database, and can copy existing Postman workspaces onto it in one step."}},{"@type":"Question","name":"Which platforms does Dispatch run on?","acceptedAnswer":{"@type":"Answer","text":"macOS 13 and later (Apple Silicon and Intel), Windows 10 and 11, and Linux (x86_64, glibc)."}},{"@type":"Question","name":"How much does Dispatch cost?","acceptedAnswer":{"@type":"Answer","text":"Dispatch is free to download from GitHub, and its source code is public there."}}]},{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Dispatch","item":"https://dispatch.ashlabs.xyz/"},{"@type":"ListItem","position":2,"name":"Postman alternative","item":"https://dispatch.ashlabs.xyz/postman-alternative/"}]}]</script>
+</head>
+<body>
+<header><nav class="wrap"><a class="brand" href="/"><img src="/favicon.svg" alt="">Dispatch</a><div class="links"><a href="/guides/">Guides</a><a href="/postman-alternative/">vs Postman</a><a href="https://github.com/Ash-io/dispatch">Source</a><a class="cta" href="https://github.com/Ash-io/dispatch/releases/latest">Download</a></div></nav></header>
+<main class="wrap">
+<p class="crumb"><a href="/">Dispatch</a> / Postman alternative</p>
+<h1>A lightweight, native alternative to Postman</h1>
+<p class="lede">Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL. It opens your Postman collections, runs their scripts, and can sync both ways with your Postman workspaces, so you can switch on your own while your team stays where it is.</p>
+<p><a href="https://github.com/Ash-io/dispatch/releases/latest">Download Dispatch</a> for macOS, Windows or Linux. No account needed.</p>
+
+<h2>Measured, not claimed</h2>
+<p>Download size, measured 24 October 2026 on macOS Apple Silicon: Dispatch 0.6.1 is 8,021,760 bytes; Postman's macOS arm64 download is 206,943,275 bytes, about 26 times larger.</p>
+<p>On Linux (Ubuntu 24.04.3), with the same workload of 11 tabs each holding the same 5.3 MB JSON response:</p>
+<table>
+<tr><th>Metric</th><th>Dispatch 0.4.0</th><th>Postman 12.33.4</th></tr>
+<tr><td>Installer download</td><td>2.4 MB (.deb)</td><td>199 MB (tar.gz)</td></tr>
+<tr><td>Disk after install</td><td>2.4 MB .deb plus the system WebKitGTK</td><td>539 MB</td></tr>
+<tr><td>Memory, idle</td><td>about 528 MB, 3 processes</td><td>about 930 MB, 7 to 14 processes</td></tr>
+<tr><td>Memory, 11 tabs with 5.3 MB responses</td><td>about 620 MB</td><td>about 930 MB</td></tr>
+<tr><td>CPU to fetch and render one 5.3 MB response</td><td>under 1 s</td><td>about 2 s</td></tr>
+</table>
+<p>The method is written up in the <a href="https://github.com/Ash-io/dispatch#benchmarks-dispatch-vs-postman">README</a>.</p>
+
+<h2>What carries over from Postman</h2>
+<ul class="plain">
+<li>Postman collections (v2.0 and v2.1) and environments, plus OpenAPI 3, Swagger 2, Insomnia (v4 and v5) and HAR imports. Export writes standard Postman files.</li>
+<li>Variables resolve in Postman's order: local, data, environment, collection, then globals, with shared and current values kept apart the same way. Dynamic variables such as <code>{{$guid}}</code> work.</li>
+<li>Pre-request and post-response scripts with the <code>pm</code> API, collection and folder scripts, and <code>pm.execution.setNextRequest</code> in the runner.</li>
+<li>Auth: Bearer, Basic, API key, OAuth 2.0 (client credentials, password, authorization code with PKCE), AWS Signature v4, Digest and Hawk.</li>
+<li>Examples, docs written in Markdown, and folders, all syncing both ways when you connect a Postman account.</li>
+</ul>
+
+<h2>What Dispatch adds</h2>
+<ul class="plain">
+<li>Requests sent from Rust, so there are no browser CORS limits, with a DNS, TCP and TLS, first byte and download timing breakdown.</li>
+<li>Load testing with up to 500 virtual users, local mock servers from saved examples, and side-by-side comparison of a request across two environments.</li>
+<li>Collections saved as readable files for Git, and a command-line runner for CI with junit and json reports.</li>
+<li>A Vault for secrets, referenced as <code>{{vault:name}}</code>, that never syncs or exports and can't be read by scripts.</li>
+<li>An optional <a href="/guides/server-setup/">self-hosted team server</a> with its own users, roles, per-workspace access and an audit log, on your own machine, Docker or Cloudflare.</li>
+</ul>
+
+<h2>Limits to know about</h2>
+<ul class="plain">
+<li>gRPC requests are saved with your open tabs. They aren't part of Postman collections, so they don't sync.</li>
+<li>Auth types Dispatch can't apply yet are left untouched, so they survive a round trip, but those requests won't authenticate in Dispatch.</li>
+<li>Dispatch has no hosted cloud of its own. Teams share work through Postman sync or a Dispatch server they run.</li>
+</ul>
+
+<h2>Questions</h2>
+<h3 style="font-family:var(--fd);font-weight:600;font-size:18px;margin:18px 0 6px">Can I use Dispatch without a Postman account?</h3><p>Yes. The built-in local profile keeps requests, collections and environments on your device, with no account. Postman sync is optional.</p>
+<h3 style="font-family:var(--fd);font-weight:600;font-size:18px;margin:18px 0 6px">Will my Postman collections and scripts work?</h3><p>Dispatch imports Postman collections (v2.0 and v2.1) and environments, resolves variables in the same order as Postman, and runs pre-request and post-response scripts with the pm API, including pm.test, pm.expect, pm.sendRequest and the bundled chai, crypto-js and lodash libraries.</p>
+<h3 style="font-family:var(--fd);font-weight:600;font-size:18px;margin:18px 0 6px">Can my team keep using Postman while I use Dispatch?</h3><p>Yes. Add your Postman account as a profile and Dispatch reads and writes your workspaces, collections, environments and globals through Postman's official API. If a collection changed in Postman since your last sync, Dispatch asks before overwriting.</p>
+<h3 style="font-family:var(--fd);font-weight:600;font-size:18px;margin:18px 0 6px">Can a team stop using Postman completely?</h3><p>Yes. The self-hosted Dispatch server has its own users and roles, can store workspaces in its own database, and can copy existing Postman workspaces onto it in one step.</p>
+<h3 style="font-family:var(--fd);font-weight:600;font-size:18px;margin:18px 0 6px">Which platforms does Dispatch run on?</h3><p>macOS 13 and later (Apple Silicon and Intel), Windows 10 and 11, and Linux (x86_64, glibc).</p>
+<h3 style="font-family:var(--fd);font-weight:600;font-size:18px;margin:18px 0 6px">How much does Dispatch cost?</h3><p>Dispatch is free to download from GitHub, and its source code is public there.</p>
+
+<p style="margin-top:30px"><a href="/guides/postman-sync/">Guide: two-way sync with Postman</a> · <a href="/guides/import-export/">Guide: import and export</a> · <a href="/guides/">All guides</a></p>
+</main>
+<footer class="wrap"><p>Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL. <a href="/">Home</a> · <a href="/guides/">All guides</a> · <a href="https://github.com/Ash-io/dispatch">GitHub</a></p><p class="legal">Dispatch is an independent API client that interoperates with Postman via Postman's official API. Not affiliated with Postman, Inc.</p></footer>
+</body>
+</html>

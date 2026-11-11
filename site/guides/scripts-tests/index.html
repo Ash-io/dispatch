@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scripts and tests · Dispatch guide</title>
+<meta name="description" content="Chain tokens between requests and check every response, with Postman's pm API.">
+<link rel="canonical" href="https://dispatch.ashlabs.xyz/guides/scripts-tests/">
+<meta name="theme-color" content="#131614">
+<meta property="og:title" content="Scripts and tests · Dispatch guide">
+<meta property="og:description" content="Chain tokens between requests and check every response, with Postman's pm API.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://dispatch.ashlabs.xyz/guides/scripts-tests/">
+<meta property="og:image" content="https://dispatch.ashlabs.xyz/img/light.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap">
+<link rel="stylesheet" href="/guides/guides.css">
+<script type="application/ld+json">[{"@context":"https://schema.org","@type":"HowTo","name":"Scripts and tests","description":"Chain tokens between requests and check every response, with Postman's pm API.","url":"https://dispatch.ashlabs.xyz/guides/scripts-tests/","tool":[{"@type":"HowToTool","name":"Dispatch API client"}],"step":[{"@type":"HowToStep","position":1,"name":"Open the Scripts tab","text":"Pre-request runs before sending. Post-response runs after.","url":"https://dispatch.ashlabs.xyz/guides/scripts-tests/#step-1"},{"@type":"HowToStep","position":2,"name":"Save a value for later","text":"pm.environment.set() stores the token. Other requests use {{token}}.","url":"https://dispatch.ashlabs.xyz/guides/scripts-tests/#step-2"},{"@type":"HowToStep","position":3,"name":"Write a test","text":"pm.test() with pm.expect(). Real chai, lodash and crypto-js are built in.","url":"https://dispatch.ashlabs.xyz/guides/scripts-tests/#step-3"},{"@type":"HowToStep","position":4,"name":"Or use a snippet","text":"Snippets inserts ready-made recipes: token chaining, HMAC signing, conditional skips.","url":"https://dispatch.ashlabs.xyz/guides/scripts-tests/#step-4"},{"@type":"HowToStep","position":5,"name":"Send and see results","text":"The Tests tab shows pass or fail. Console shows console.log output.","url":"https://dispatch.ashlabs.xyz/guides/scripts-tests/#step-5"}]},{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Dispatch","item":"https://dispatch.ashlabs.xyz/"},{"@type":"ListItem","position":2,"name":"Guides","item":"https://dispatch.ashlabs.xyz/guides/"},{"@type":"ListItem","position":3,"name":"Scripts and tests","item":"https://dispatch.ashlabs.xyz/guides/scripts-tests/"}]}]</script>
+</head>
+<body>
+<header><nav class="wrap"><a class="brand" href="/"><img src="/favicon.svg" alt="">Dispatch</a><div class="links"><a href="/guides/">Guides</a><a href="/postman-alternative/">vs Postman</a><a href="https://github.com/Ash-io/dispatch">Source</a><a class="cta" href="https://github.com/Ash-io/dispatch/releases/latest">Download</a></div></nav></header>
+<main class="wrap">
+<article>
+<p class="crumb"><a href="/guides/">Guides</a> / 06</p>
+<h1>Scripts and tests</h1>
+<p class="lede">Chain tokens between requests and check every response, with Postman's pm API.</p>
+<p>Scripts let a request do more: save a token for the next call, sign a request, or check the response is right. If you know Postman's pm API, you already know this.</p>
+<ol class="steps">
+<li id="step-1"><h2>Open the Scripts tab</h2><p class="hint"><b>Pre-request</b> runs before sending. <b>Post-response</b> runs after.</p><p>Open a request, and go to Scripts. Pre-request runs before it is sent. Post-response runs when the reply comes back.</p></li>
+<li id="step-2"><h2>Save a value for later</h2><p class="hint"><code>pm.environment.set()</code> stores the token. Other requests use <code>{{token}}</code>.</p><p>This script reads the token from the response, and saves it into the environment. Every other request can then use it, as {{token}}.</p></li>
+<li id="step-3"><h2>Write a test</h2><p class="hint"><code>pm.test()</code> with <code>pm.expect()</code>. Real <b>chai</b>, <b>lodash</b> and <b>crypto-js</b> are built in.</p><p>Tests use pm.test, with pm.expect. Let us also check the response is quick. Chai, lodash and crypto-js are all built in.</p></li>
+<li id="step-4"><h2>Or use a snippet</h2><p class="hint"><b>Snippets</b> inserts ready-made recipes: token chaining, HMAC signing, conditional skips.</p><p>Not sure what to write? Click Snippets, for ready-made recipes like token chaining and H MAC signing.</p></li>
+<li id="step-5"><h2>Send and see results</h2><p class="hint">The <b>Tests</b> tab shows pass or fail. <b>Console</b> shows <code>console.log</code> output.</p><p>Now send it. The Tests tab shows each test passing or failing, and the console shows anything you logged.</p></li>
+</ol>
+<p class="outro">Now your requests test themselves. Next, we will run a whole collection in one go.</p>
+<nav class="pager"><a href="/guides/authorization/"><small>Previous</small>Authorization: tokens, keys and OAuth 2.0</a><a class="nx" href="/guides/collection-runner/"><small>Next</small>Run a whole collection</a></nav>
+</article>
+</main>
+<footer class="wrap"><p>Dispatch is a native API client for REST, WebSocket, gRPC and GraphQL. <a href="/">Home</a> · <a href="/guides/">All guides</a> · <a href="https://github.com/Ash-io/dispatch">GitHub</a></p><p class="legal">Dispatch is an independent API client that interoperates with Postman via Postman's official API. Not affiliated with Postman, Inc.</p></footer>
+</body>
+</html>
