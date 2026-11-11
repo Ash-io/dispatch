@@ -710,3 +710,8 @@ progress::-webkit-progress-value { background: var(--accent); }
 .ws-frame pre { margin: 0; flex: 1; white-space: pre-wrap; word-break: break-word; font-size: 12px; max-height: 140px; overflow: auto; }
 .ws-composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); align-items: flex-end; }
 .ws-compose { flex: 1; resize: vertical; min-height: 40px; }
+
+/* AI assistant settings: model picker, then one row per provider. */
+.ai-providers { display: flex; flex-direction: column; margin-top: 12px; border-top: 1px solid var(--border); }
+.ai-provider { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.ai-provider-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1129,7 +1129,7 @@ test('request chain analysis', () => {
 });
 
 // ---------- AI assistant prompts ----------
-import { describeExchange, extractCode, requestFromAi, createPrompt } from '../src/js/assist.js';
+import { describeExchange, extractCode, requestFromAi, createPrompt, REQUEST_SCHEMA, chooseModel, checkSchema, parseStructured, retryPrompt } from '../src/js/assist.js';
 
 test('assistant prompts redact credentials and parse answers', () => {
   const item = { name: 'Me', request: { method: 'GET', url: parseUrl('{{baseUrl}}/me?token={{tok}}'), header: [{ key: 'Authorization', value: 'Bearer abc' }, { key: 'X-Trace', value: 't1' }, { key: 'X-Session-Id', value: 's' }, { key: 'Off', value: 'x', disabled: true }] }, event: [{ listen: 'test', script: { exec: ['pm.test("old")'] } }] };
@@ -1306,4 +1306,40 @@ test('collectKeys indexes names and types per path, never values', () => {
   assert.deepEqual(Object.fromEntries(idx.get('user')), { name: 'string', age: 'number', email: 'null' });
   assert.deepEqual([...idx.get('items/[]').keys()], ['id']);
   assert.ok(!JSON.stringify([...idx.values()].map((m) => [...m])).includes('s3cret'));
+});
+
+test('chooseModel keeps a valid choice and falls back to the first available model', () => {
+  const providers = [
+    { id: 'anthropic', models: [] },
+    { id: 'ollama', models: [{ id: 'llama3.2:latest' }, { id: 'qwen3:14b' }] },
+    { id: 'openai', models: [{ id: 'gpt-5' }] },
+  ];
+  assert.deepEqual(chooseModel({ provider: 'openai', model: 'gpt-5' }, providers), { provider: 'openai', model: 'gpt-5' });
+  assert.deepEqual(chooseModel({ provider: 'openai', model: 'gone' }, providers), { provider: 'ollama', model: 'llama3.2:latest' }, 'a removed model falls back');
+  assert.deepEqual(chooseModel({ provider: 'compatible', model: 'x' }, providers), { provider: 'ollama', model: 'llama3.2:latest' }, 'a disconnected provider falls back');
+  assert.deepEqual(chooseModel(undefined, providers), { provider: 'ollama', model: 'llama3.2:latest' });
+  assert.equal(chooseModel(undefined, [{ id: 'anthropic', models: [] }]), null);
+  assert.equal(chooseModel(undefined, []), null);
+});
+
+test('checkSchema finds what a structured answer gets wrong', () => {
+  const good = { name: 'List', method: 'GET', url: '/u', headers: [{ key: 'A', value: '1' }], bodyMode: 'none', body: '', description: '' };
+  assert.deepEqual(checkSchema(good, REQUEST_SCHEMA), []);
+  const bad = { ...good, method: 'FETCH', headers: [{ key: 'A' }], extra: 1 };
+  delete bad.url;
+  const errs = checkSchema(bad, REQUEST_SCHEMA);
+  assert.ok(errs.includes('$.url is missing'), errs.join('\n'));
+  assert.ok(errs.some((e) => e.startsWith('$.method should be one of')), errs.join('\n'));
+  assert.ok(errs.includes('$.headers[0].value is missing'), errs.join('\n'));
+  assert.ok(errs.includes("$.extra isn't allowed"), errs.join('\n'));
+  assert.deepEqual(checkSchema('x', { type: 'object' }), ['$ should be object, not string']);
+  assert.deepEqual(checkSchema(3, { type: 'number' }), [], 'integers are numbers');
+});
+
+test('parseStructured accepts fenced JSON and explains failures', () => {
+  const schema = { type: 'object', properties: { a: { type: 'string' } }, required: ['a'], additionalProperties: false };
+  assert.deepEqual(parseStructured('```json\n{"a":"x"}\n```', schema), { a: 'x' });
+  assert.throws(() => parseStructured('Sure! Here it is', schema), /wasn't valid JSON/);
+  assert.throws(() => parseStructured('{"b":1}', schema), /\$\.a is missing/);
+  assert.match(retryPrompt('Make a request', 'The answer wasn\'t valid JSON.'), /^Make a request\n\nYour previous answer couldn't be used: The answer wasn't valid JSON\. Reply again/);
 });

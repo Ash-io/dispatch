@@ -49,7 +49,7 @@ For UI work without the native shell, open `src/index.html` in a browser. It run
 ## Secrets
 
 - Postman keys added to a server are encrypted with `SECRET_KEY` (`server/src/accounts.rs`, and the same format in `worker/src/index.js`). No endpoint returns one, including its ciphertext: only the last four characters. Never log them or put them in the audit log.
-- Postman and Anthropic keys stay on the Rust side. The page only gets checks such as `has_api_key`, never the key itself.
+- Postman keys and AI provider keys stay on the Rust side. The page only gets checks such as `has_api_key` or `ai_providers` (connection state and model names), never the key itself. AI provider base URLs are stored on the Rust side too, so the page can't point a saved key at another host.
 - `{{vault:name}}` values do reach the page, because `src/js/vault.js` loads them to resolve requests. They must never sync or export, and scripts and code snippets must use `Resolver.withoutVault()` so they only see the placeholder.
 - The AI assistant (`src/js/assist.js`) sends the request with variables unfilled and credential-looking headers redacted. Bodies and URLs are capped or sent as written, not redacted, so don't describe them as scrubbed.
 - Viewer-role server users must not receive `currentValue`s. Stripping happens only on single-item GETs (`should_redact` / `shouldRedact`), so any new route that returns variable values needs its own check.

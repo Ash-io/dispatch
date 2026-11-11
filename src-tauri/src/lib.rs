@@ -85,25 +85,29 @@ fn delete_cookie(state: State<'_, http::HttpState>, domain: String, path: String
 
 // ---------- AI assistant ----------
 
-/// Verifies the Anthropic API key, then keeps it in the keychain.
+/// Connected AI providers and their cached models (never the keys).
 #[tauri::command]
-async fn ai_set_key(app: AppHandle, key: String) -> Result<(), String> {
-    let key = key.trim().to_string();
-    ai::verify_key(&key).await?;
-    secrets::store_set(&data_dir(&app)?, ai::KEY_SLOT, &key)
+fn ai_providers(app: AppHandle) -> Result<Vec<ai::ProviderState>, String> {
+    ai::providers(&data_dir(&app)?)
+}
+
+/// Checks the key or address by listing models, then saves it.
+#[tauri::command]
+async fn ai_connect(app: AppHandle, provider: ai::Kind, key: Option<String>, base_url: Option<String>) -> Result<ai::ProviderState, String> {
+    ai::connect(&data_dir(&app)?, provider, key, base_url).await
 }
 
 #[tauri::command]
-fn ai_has_key(app: AppHandle) -> Result<bool, String> {
-    Ok(secrets::store_get(&data_dir(&app)?, ai::KEY_SLOT)?.is_some_and(|k| !k.is_empty()))
+async fn ai_refresh_models(app: AppHandle, provider: ai::Kind) -> Result<ai::ProviderState, String> {
+    ai::refresh_models(&data_dir(&app)?, provider).await
 }
 
 #[tauri::command]
-fn ai_delete_key(app: AppHandle) -> Result<(), String> {
-    secrets::store_set(&data_dir(&app)?, ai::KEY_SLOT, "")
+fn ai_disconnect(app: AppHandle, provider: ai::Kind) -> Result<(), String> {
+    ai::disconnect(&data_dir(&app)?, provider)
 }
 
-/// Asks Claude; text streams on `on_event`. Stop it with stop_request(id).
+/// Asks the chosen provider and model; text streams on `on_event`. Stop it with stop_request(id).
 #[tauri::command]
 async fn ai_ask(
     app: AppHandle,
@@ -112,11 +116,10 @@ async fn ai_ask(
     id: String,
     on_event: tauri::ipc::Channel<ai::AiEvent>,
 ) -> Result<ai::Answer, String> {
-    let key = secrets::store_get(&data_dir(&app)?, ai::KEY_SLOT)?.filter(|k| !k.is_empty())
-        .ok_or_else(|| "Add your Anthropic API key under Settings → AI assistant first.".to_string())?;
+    let dir = data_dir(&app)?;
     let cancel: std::sync::Arc<tokio::sync::Notify> = Default::default();
     state.streams.lock().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), cancel.clone());
-    let out = ai::ask(&key, request, cancel, move |e| { let _ = on_event.send(e); }).await;
+    let out = ai::ask(&dir, request, cancel, move |e| { let _ = on_event.send(e); }).await;
     state.streams.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
     out
 }
@@ -459,9 +462,10 @@ pub fn run() {
             list_cookies,
             set_cookie,
             delete_cookie,
-            ai_set_key,
-            ai_has_key,
-            ai_delete_key,
+            ai_providers,
+            ai_connect,
+            ai_refresh_models,
+            ai_disconnect,
             ai_ask,
             grpc_describe,
             grpc_call,
