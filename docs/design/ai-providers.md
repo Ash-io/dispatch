@@ -24,7 +24,7 @@ Settings → AI gains a provider list. Connecting a provider works like the curr
 
 1. The user picks a provider and pastes a key, or a base URL for local Ollama and compatible servers.
 2. Rust calls the provider's model list with those credentials. A successful call is the key check, replacing today's `verify_key`, and its result is the model list.
-3. The key is saved only if that call succeeds. Its secrets slot is `ai-key:<provider-id>`. On first launch the existing `anthropic-api-key` slot moves to `ai-key:anthropic`.
+3. The key is saved only if that call succeeds, and a saved key is reused only at the address it was saved for. Its secrets slot is `ai-key-<provider-id>`. On first launch the existing `anthropic-api-key` slot moves to `ai-key-anthropic`.
 4. The model list is cached, with the time it was fetched, in settings (model IDs and display names only). It refreshes when the key changes, when the user presses Refresh, and when a request fails because a model no longer exists.
 
 Some lists include models that can't chat. OpenAI's includes embedding, audio, image and moderation models, so Rust filters by ID pattern and keeps the filter in one tested function. Ollama reports each model's size and quantisation; show those next to the name, since a 3B model and a 70B model write very differently.
@@ -80,6 +80,6 @@ Whatever the provider, the page validates the JSON against the schema. If valida
 
 - Rust, next to each client: build the request body, parse the stream from a local SSE or NDJSON server (the pattern already in `ai.rs` tests), and map errors (401, 404 model, 429).
 - Rust: the model-list filter, using real list responses saved as fixtures.
-- Rust: moving the old `anthropic-api-key` slot to `ai-key:anthropic`.
+- Rust: moving the old `anthropic-api-key` slot to `ai-key-anthropic`.
 - JS: schema validation and the single retry.
 - By hand on macOS, Windows and Linux: connect each provider, check that the models appear, and run each AI feature once. Note any platform that couldn't be checked.
