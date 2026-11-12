@@ -330,7 +330,8 @@ export function validateTheme(input) {
       out.syntax[mode][k] = isHex(v) ? v.toLowerCase() : derived[k];
     }
   }
-  if (t.extraCss) errors.push('extraCss isn\'t supported yet');
+  if (t.extraCss !== undefined && typeof t.extraCss !== 'string') errors.push('extraCss must be a string');
+  out.extraCss = cleanCss(typeof t.extraCss === 'string' ? t.extraCss : '').css;
   return { ok: !errors.length, errors, theme: out };
 }
 
@@ -377,6 +378,111 @@ export function normalizeTheme(input) {
   return { theme: fixTheme(theme), errors };
 }
 
+// ---------------------------------------------------------------- extra CSS
+
+export const EXTRA_CSS_MAX = 8 * 1024;
+const TAGS = new Set(['body', 'main', 'header', 'footer', 'nav', 'section', 'aside', 'article', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'p', 'a', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'pre', 'code', 'strong', 'em', 'small', 'button', 'input', 'img', 'mark', 'kbd']);
+const BANNED_FN = /\b(url|image-set|-webkit-image-set|image|element|cross-fade|expression|src|paint|env)\s*\(/i;
+const SELECTOR_OK = /^[a-z0-9\s.#:>+~()[\]="'_,-]+$/i;
+const MEDIA_OK = /^[a-z0-9\s():,.-]+$/i;
+
+/** One declaration: null if it's allowed as written, or why it was removed. */
+function declProblem(prop, value) {
+  const v = value.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!/^-?[a-z][a-z-]*$/.test(prop)) return `"${prop}" isn't a property name`;
+  if (BANNED_FN.test(v)) return `${prop}: loads or computes something from outside`;
+  if (['behavior', '-moz-binding', 'filter'].includes(prop) && /behavior|binding|progid/.test(prop + v)) return `${prop} isn't allowed`;
+  if (prop === 'behavior' || prop === '-moz-binding') return `${prop} isn't allowed`;
+  if (prop === 'content' && !/^(none|normal|"[^"]*"|'[^']*')$/.test(v)) return 'content can only be a plain string';
+  if (prop === 'position' && /\bfixed\b/.test(v)) return 'position: fixed can cover the page';
+  if (prop === 'display' && /\bnone\b/.test(v)) return 'display: none hides content';
+  if (prop === 'visibility' && /hidden|collapse/.test(v)) return 'visibility: hidden hides content';
+  if (prop === 'opacity' && parseFloat(v) < 0.2) return 'opacity below 0.2 hides content';
+  if (prop === 'font-size') {
+    const m = /^(\d*\.?\d+)(px|em|rem|%)?/.exec(v);
+    const px = m ? parseFloat(m[1]) * ({ em: 16, rem: 16, '%': 0.16 }[m[2]] || 1) : 16;
+    if (px < 12) return 'font sizes below 12 px are too small to read';
+  }
+  if ((prop === 'outline' || prop === 'outline-style') && /^(none|0)(\s|$|!)/.test(v)) return 'removing focus outlines hurts keyboard use';
+  if (prop === 'outline-width' && /^0(px)?(\s|$|!)/.test(v)) return 'removing focus outlines hurts keyboard use';
+  if (/(^|-)background-clip$/.test(prop) && /\btext\b/.test(v)) return 'gradient or image text isn\'t allowed';
+  if (prop === '-webkit-text-fill-color' && /transparent/.test(v)) return 'transparent text isn\'t allowed';
+  if (/[{}<]/.test(v)) return `${prop}: unexpected characters`;
+  return null;
+}
+
+/** A selector scoped under body, or null if it isn't allowed. */
+function scopeSelector(sel) {
+  const s = sel.trim().replace(/\s+/g, ' ');
+  if (!s || !SELECTOR_OK.test(s)) return null;
+  if (/\*|(^|[\s>+~(])(html|:root)\b/i.test(s)) return null;
+  const words = s.match(/(^|[\s>+~(])([a-z][a-z0-9]*)/gi) || [];
+  const usesSite = /\.[a-z_-][\w-]*/i.test(s) || /#[a-z_-][\w-]*/i.test(s) || words.some((w) => TAGS.has(w.replace(/^[\s>+~(]/, '').toLowerCase()));
+  if (!usesSite) return null;
+  return /^body\b/i.test(s) ? s : `body ${s}`;
+}
+
+/**
+ * Cleans extra CSS for a published site. Comments are dropped first, so they
+ * can't split a token; backslash escapes and "<" are refused outright. Allowed:
+ * plain rules and @media blocks. Removed, with a reason: other at-rules,
+ * anything that can load from outside, and declarations that hide content,
+ * cover the page or remove focus outlines. Returns { css, removed: [reasons] }.
+ */
+export function cleanCss(input) {
+  const removed = [];
+  let src = String(input || '');
+  if (src.length > EXTRA_CSS_MAX) { removed.push(`only the first ${EXTRA_CSS_MAX / 1024} KB is kept`); src = src.slice(0, EXTRA_CSS_MAX); }
+  src = src.replace(/\/\*[\s\S]*?(\*\/|$)/g, ' ');
+  if (/\\/.test(src)) return { css: '', removed: [...removed, 'backslash escapes aren\'t allowed, so nothing was kept'] };
+  if (/</.test(src)) return { css: '', removed: [...removed, '"<" isn\'t allowed in CSS, so nothing was kept'] };
+  let i = 0;
+  const rules = (depth) => {
+    const out = [];
+    while (i < src.length) {
+      while (i < src.length && /[\s;]/.test(src[i])) i++;
+      if (i >= src.length) break;
+      if (src[i] === '}') { if (depth) { i++; return out; } i++; removed.push('a stray "}" was ignored'); continue; }
+      const open = src.indexOf('{', i);
+      const semi = src.indexOf(';', i);
+      if (src[i] === '@' && (open === -1 || (semi !== -1 && semi < open))) { removed.push(`${src.slice(i, semi === -1 ? undefined : semi).trim().split(/\s/)[0]} isn't allowed`); i = semi === -1 ? src.length : semi + 1; continue; }
+      if (open === -1) { removed.push('unfinished CSS at the end was ignored'); break; }
+      const head = src.slice(i, open).trim();
+      i = open + 1;
+      if (head.startsWith('@')) {
+        const m = /^@media\s+(.+)$/i.exec(head);
+        if (m && depth === 0 && MEDIA_OK.test(m[1])) { const inner = rules(1); if (inner.length) out.push(`@media ${m[1].trim()} {\n${inner.map((r) => `  ${r}`).join('\n')}\n}`); continue; }
+        removed.push(`${head.split(/\s/)[0]} isn't allowed`);
+        let d = 1;
+        while (i < src.length && d) { if (src[i] === '{') d++; else if (src[i] === '}') d--; i++; }
+        continue;
+      }
+      const close = src.indexOf('}', i);
+      const body = src.slice(i, close === -1 ? src.length : close);
+      i = close === -1 ? src.length : close + 1;
+      if (body.includes('{')) { removed.push(`nested blocks under "${head}" aren't allowed`); continue; }
+      const selectors = head.split(',').map(scopeSelector);
+      if (selectors.some((x) => !x)) { removed.push(`selector "${head.slice(0, 60)}" isn't allowed: use the site's own classes or elements, without *, html or :root`); continue; }
+      const decls = [];
+      for (const part of body.split(';')) {
+        const c = part.indexOf(':');
+        if (!part.trim()) continue;
+        if (c === -1) { removed.push(`"${part.trim().slice(0, 40)}" isn't a declaration`); continue; }
+        const prop = part.slice(0, c).trim().toLowerCase();
+        const value = part.slice(c + 1).trim();
+        const why = declProblem(prop, value);
+        if (why) removed.push(why);
+        else decls.push(`${prop}: ${value.replace(/\s+/g, ' ')};`);
+      }
+      if (decls.length) out.push(`${selectors.join(', ')} { ${decls.join(' ')} }`);
+    }
+    if (depth) removed.push('an unclosed @media block was closed');
+    return out;
+  };
+  const css = rules(0).join('\n');
+  return { css, removed: [...new Set(removed)] };
+}
+
 // ---------------------------------------------------------------- CSS
 
 const vars = (p, sx) => `--bg: ${p.bg}; --panel: ${p.surface}; --text: ${p.text}; --muted: ${p.muted}; --line: ${p.line}; --accent: ${p.accent}; --on-accent: ${p.onAccent}; --code-bg: ${p.codeBg}; --code-text: ${p.codeText}; --get: ${p.get}; --post: ${p.post}; --put: ${p.put}; --patch: ${p.patch}; --delete: ${p.delete}; --syn-key: ${sx.key}; --syn-string: ${sx.string}; --syn-number: ${sx.number}; --syn-literal: ${sx.literal}; --syn-punct: ${sx.punct};`;
@@ -399,15 +505,17 @@ export function themeCss(theme) {
   --space: ${space};
   --rule: ${theme.shape.borders === 'none' ? 'transparent' : 'var(--line)'};
 }`;
+  // Extra CSS is cleaned again here, so a theme from anywhere can't skip it.
+  const extra = theme.extraCss ? `\n/* Extra CSS */\n${cleanCss(theme.extraCss).css}\n` : '';
   if (theme.mode !== 'auto') {
-    return `${common}\n:root { color-scheme: ${theme.mode}; ${vars(theme.colors[theme.mode], theme.syntax[theme.mode])} }\n`;
+    return `${common}\n:root { color-scheme: ${theme.mode}; ${vars(theme.colors[theme.mode], theme.syntax[theme.mode])} }\n${extra}`;
   }
   return `${common}
 :root { color-scheme: light dark; ${vars(theme.colors.light, theme.syntax.light)} }
 @media (prefers-color-scheme: dark) { :root:not([data-mode="light"]) { ${vars(theme.colors.dark, theme.syntax.dark)} } }
 :root[data-mode="dark"] { color-scheme: dark; ${vars(theme.colors.dark, theme.syntax.dark)} }
 :root[data-mode="light"] { color-scheme: light; }
-`;
+${extra}`;
 }
 
 /** Classes on <body> that select the layout and its options. */

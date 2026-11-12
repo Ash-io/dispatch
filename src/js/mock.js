@@ -55,8 +55,9 @@ async function mockDesign(request) {
   let theme = revise ? JSON.parse(prompt.split('CURRENT THEME\n')[1].split('\n')[0]) : PRESETS.find((p) => p.id === id).theme;
   if (brand && isHex(brand) && !revise) theme = withAccent(theme, brand);
   if (revise) theme = { ...theme, shape: { ...theme.shape, radius: Math.max(0, theme.shape.radius - 4) } };
-  const { version, extraCss, ...rest } = theme;
-  void version; void extraCss;
+  const { version, ...rest } = theme;
+  void version;
+  if (id === 'signal') rest.extraCss = '.header-banded .hero { background: linear-gradient(120deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #000)); }';
   await delay(400);
   return JSON.stringify({ name: revise ? 'Revised' : { ledger: 'Warm ledger', signal: 'Signal band', 'field-notes': 'Quiet notes' }[id], rationale: 'A mock design for the browser preview.', ...rest });
 }

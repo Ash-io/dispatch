@@ -5,7 +5,7 @@
 // code, retried once with the problems listed, then fixed or dropped.
 // See docs/design/docs-theming.md.
 
-import { LAYOUTS, MODES, HEADERS, NAVS, DENSITIES, BORDERS, FONTS, COLOR_KEYS, SYNTAX_KEYS, validateTheme, contrastFailures, fixTheme, isHex, toOklch, fromOklch } from './theme.js';
+import { LAYOUTS, MODES, HEADERS, NAVS, DENSITIES, BORDERS, FONTS, COLOR_KEYS, SYNTAX_KEYS, validateTheme, contrastFailures, fixTheme, isHex, toOklch, fromOklch, cleanCss } from './theme.js';
 
 export const TONES = ['calm', 'technical', 'warm', 'bold', 'playful', 'formal', 'minimal', 'editorial'];
 
@@ -106,8 +106,9 @@ export const THEME_SCHEMA = {
       required: ['radius', 'borders', 'density'],
       additionalProperties: false,
     },
+    extraCss: { type: 'string' },
   },
-  required: ['name', 'rationale', 'layout', 'mode', 'header', 'nav', 'colors', 'syntax', 'type', 'shape'],
+  required: ['name', 'rationale', 'layout', 'mode', 'header', 'nav', 'colors', 'syntax', 'type', 'shape', 'extraCss'],
   additionalProperties: false,
 };
 
@@ -140,12 +141,16 @@ ${fontList('mono')}
 Layouts:
 ${Object.entries(LAYOUTS).map(([k, v]) => `  - ${k}: ${v}`).join('\n')}
 Overview header: plain, banded (a full-width band in the accent colour, text in onAccent) or split (the introduction beside a first request and its response).
-Menu highlight: quiet (coloured text) or boxed (filled).`;
+Menu highlight: quiet (coloured text) or boxed (filled).
+
+extraCss: usually an empty string. Use it only for a touch the options above can't express, such as a subtle pattern or gradient in the banded header, or a different table or code-tab style. At most 2 KB. Use the theme's custom properties (var(--accent), var(--on-accent), var(--bg), var(--panel), var(--text), var(--muted), var(--line), var(--code-bg), var(--code-text), var(--radius)) rather than new colours, so light and dark both work. Selectors must use the site's classes or elements: .top, .brand, .side, .nav-group, main, .hero, .hero-code, .endpoint, .ep-head, .route, .cols, .explain, .examples, .tabs, .label, .m (method badge), .code (status badge), .badge, table, th, td, pre, code, h1, h2, h4, footer. Not allowed, and removed if present: url(), @import, @font-face, other at-rules except @media, *, html, :root, position: fixed, hiding anything, font sizes below 12 px, removing focus outlines, and gradient text.`;
 }
 
 const brandLines = (brand) => [
   `Site name: ${brand.name || 'API documentation'}`,
   brand.colors?.length ? `Brand colours: ${brand.colors.join(', ')}` : 'Brand colours: none given. Choose a palette that suits the audience and tone.',
+  brand.themeColor ? `Theme colour declared by the brand's website: ${brand.themeColor}${brand.colors?.length ? '' : ' (a neutral: the brand may be mostly monochrome)'}` : null,
+  brand.websiteFonts?.length ? `Fonts on the brand's website (font names only): ${brand.websiteFonts.map((f) => (f.id ? `${f.name} (in the catalogue as ${f.id})` : `${f.name} (not available; choose the closest voice)`)).join(', ')}` : null,
   brand.audience ? `Audience: ${brand.audience}` : null,
   brand.tone?.length ? `Tone: ${brand.tone.join(', ')}` : null,
   brand.likes ? `Documentation sites the team likes (take a direction from them, don't copy them): ${brand.likes}` : null,
@@ -200,6 +205,7 @@ export function designProblems(answer, shape) {
   }
   if (answer.colors?.dark && isHex(answer.colors.dark.bg) && toOklch(answer.colors.dark.bg).l > 0.4) fixable.push('colors.dark.bg is too light for a dark palette');
   if (answer.colors?.light && isHex(answer.colors.light.bg) && toOklch(answer.colors.light.bg).l < 0.85) fixable.push('colors.light.bg is too dark for a light palette');
+  fixable.push(...cleanCss(answer.extraCss || '').removed.map((why) => `extraCss: ${why}`));
   fixable.push(...contrastFailures(theme));
   return { fatal: errors, fixable, all: [...errors, ...fixable] };
 }
@@ -221,6 +227,11 @@ export function correctDesign(theme, shape) {
   clampBg('light', (l) => l < 0.85, 0.97);
   adjusted.push(...contrastFailures(t));
   return { theme: fixTheme(t), adjusted };
+}
+
+/** Problems that only concern the CSS the model wrote, for the adjusted list. */
+export function cssRemovals(answer) {
+  return cleanCss(answer?.extraCss || '').removed.map((why) => `extra CSS: ${why}, removed`);
 }
 
 const retry = (prompt, problems) => `${prompt}
@@ -254,6 +265,7 @@ async function designOnce(ask, system, prompt, shape) {
   if (!answer) return { error: failure || 'no answer' };
   if (problems.fatal.length) return { error: problems.fatal.slice(0, 3).join('; ') };
   const { theme, adjusted } = correctDesign(validateTheme(answer).theme, shape);
+  adjusted.unshift(...cssRemovals(answer));
   return { theme, name: String(answer.name || '').slice(0, 40), rationale: String(answer.rationale || '').slice(0, 240), adjusted };
 }
 

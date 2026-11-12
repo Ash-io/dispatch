@@ -33,6 +33,14 @@ The review screen's **Design** tab sets how the site looks, with a live preview 
 - **Design with AI** (`src/js/docgen/design.js`): from brand colours (taken from the logo in code, editable), an audience sentence, up to three tone words and sites the team likes, the documentation AI model creates three designs: closest to the brand, bolder and quieter. **Ask for a change** revises the current design from a plain instruction.
   - The model gets the site name, those brand details, the design rules and the number of groups and requests. It never sees requests, paths, examples or variables. It answers with a theme in a fixed schema (`THEME_SCHEMA`): layouts, fonts and options are the same fixed choices as the controls.
   - Every answer is validated and contrast-checked. Problems are sent back once. After that, fixable ones (contrast, pure black or white, a layout that doesn't suit the site's size, a light dark palette) are corrected in code and listed as adjustments, and a design the schema refuses is dropped.
+- **Brand website** (`src/js/docgen/brandsite.js`): **Read colours and fonts** fetches the home page and up to four stylesheets through the normal request engine. Only colours (hex, rgb, hsl or oklch, neutrals left out, brand-named custom properties weighted) and font names (at most four words and 32 characters, so page text can't pass as one) are kept, and only those reach the AI. Fonts the catalogue has are matched to it. Cookies the site sets during this are deleted again.
+- **Extra CSS:** an optional block, written by the author in the Adjust section or by the AI in `extraCss`, for touches the options can't express. `cleanCss` in `theme.js` drops comments, then refuses backslash escapes and `<` outright. It keeps plain rules and `@media` blocks, scopes every selector under `body`, and removes, with the reason shown:
+  - other at-rules, `*`, `html` and `:root`;
+  - `url()` and anything else that loads or computes from outside;
+  - `position: fixed`, and anything that hides content;
+  - font sizes below 12 px, removed focus outlines, and gradient text.
+
+  It's limited to 8 KB, and `themeCss` cleans it again when the CSS is written.
 - **Contrast:** every theme is checked in code against WCAG AA (4.5:1 for text, method colours, links, code and syntax colours, in each mode it uses). A colour that fails has its lightness moved until it passes, keeping its hue, and the tab says what was adjusted.
 - **Logo:** chosen on the first screen. Any image is redrawn as a PNG at most 96 px tall, which also drops anything an SVG could run, and published inline.
 - **Storage:** the theme is published with each version as `_dispatch/theme.json`. The next build starts from the current version's theme, so everyone publishing the site shares one design, and rolling back restores the old look. A design you haven't published yet is kept on your device until you publish it.

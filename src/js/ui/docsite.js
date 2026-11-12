@@ -12,7 +12,8 @@ import { loadVault } from '../vault.js';
 import { parseStructured } from '../assist.js';
 import { generateDocs, OMIT, BLANK } from '../docgen/index.js';
 import { previewHtml } from '../docgen/build.js';
-import { PRESETS, DEFAULT_THEME, LAYOUTS, FONTS, MODES, HEADERS, NAVS, DENSITIES, validateTheme, normalizeTheme, contrastFailures, withAccent, isHex } from '../docgen/theme.js';
+import { PRESETS, DEFAULT_THEME, LAYOUTS, FONTS, MODES, HEADERS, NAVS, DENSITIES, validateTheme, normalizeTheme, contrastFailures, withAccent, isHex, cleanCss } from '../docgen/theme.js';
+import { brandFacts, stylesheetLinks } from '../docgen/brandsite.js';
 import { zip, toBase64 } from '../docgen/zip.js';
 import { loadFonts } from './fontcache.js';
 import { TONES, designThemes, reviseTheme, siteShape, paletteFromPixels } from '../docgen/design.js';
@@ -451,7 +452,10 @@ function designPanel(ctx, retheme) {
     fontNote.textContent = 'Getting fonts and updating the preview…';
     retheme(theme).then((fonts) => { if (fonts) describeFonts(fonts); }).catch((e) => toast(errText(e), { error: true }));
     if (redraw) draw();
-    else body.querySelectorAll('.docs-preset').forEach((el) => el.classList.toggle('on', same(PRESETS.find((pr) => pr.id === el.dataset.id).theme, theme)));
+    else {
+      body.querySelectorAll('.docs-preset[data-id]').forEach((el) => el.classList.toggle('on', same(PRESETS.find((pr) => pr.id === el.dataset.id).theme, theme)));
+      body.querySelectorAll('.docs-ai-card[data-ai]').forEach((el) => el.classList.toggle('on', same(ctx.aiDesigns?.[Number(el.dataset.ai)]?.theme || {}, theme)));
+    }
   };
   const edit = (fn) => { const next = JSON.parse(JSON.stringify(theme)); fn(next); set(next); };
 
@@ -459,6 +463,14 @@ function designPanel(ctx, retheme) {
   const fontOptions = (role) => Object.entries(FONTS).filter(([, f]) => f.roles.includes(role)).map(([id, f]) => [id, f.name, f.voice]);
   const cap = (s) => s[0].toUpperCase() + s.slice(1);
 
+  // Extra CSS: cleaned as you type, with what was removed and why. The cleaned CSS is what gets published.
+  const extraCssBox = () => {
+    const removed = h('ul', { class: 'docs-removed' });
+    const show = (text) => { const r = cleanCss(text).removed; removed.replaceChildren(...r.map((x) => h('li', null, x))); };
+    const ta = h('textarea', { class: 'textarea mono', rows: 4, spellcheck: 'false', placeholder: '.header-banded .hero { background: linear-gradient(120deg, var(--accent), var(--code-bg)); }', oninput: (e) => show(e.target.value), onchange: (e) => edit((t) => { t.extraCss = e.target.value; }) }, theme.extraCss || '');
+    show(ta.value);
+    return h('div', null, ta, removed, h('p', { class: 'hint', style: { margin: '2px 0 0' } }, 'Optional, up to 8 KB. Use the site\'s classes and var(--accent)-style colours. Anything that loads from elsewhere, hides content, covers the page or removes focus outlines is removed.'));
+  };
   const draw = () => {
     const presets = h('div', { class: 'docs-presets' }, PRESETS.map((pr) => {
       const c = pr.theme.colors[pr.theme.mode === 'dark' ? 'dark' : 'light'];
@@ -494,7 +506,8 @@ function designPanel(ctx, retheme) {
         h('label', null, 'Spacing'), select(theme.shape.density, DENSITIES.map((d) => [d, cap(d)]), (v) => edit((t) => { t.shape.density = v; })),
         h('label', null, 'Lines'), select(theme.shape.borders, [['hairline', 'Hairline rules'], ['none', 'No rules']], (v) => edit((t) => { t.shape.borders = v; })),
         h('label', null, 'Overview header'), select(theme.header, HEADERS.map((x) => [x, { plain: 'Plain', banded: 'Band in the accent colour', split: 'Introduction beside a first request' }[x]]), (v) => edit((t) => { t.header = v; })),
-        h('label', null, 'Menu highlight'), select(theme.nav, NAVS.map((x) => [x, x === 'quiet' ? 'Coloured text' : 'Filled']), (v) => edit((t) => { t.nav = v; }))),
+        h('label', null, 'Menu highlight'), select(theme.nav, NAVS.map((x) => [x, x === 'quiet' ? 'Coloured text' : 'Filled']), (v) => edit((t) => { t.nav = v; })),
+        h('label', null, 'Extra CSS'), extraCssBox()),
       note,
       fontNote,
       h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '8px' } }, h('button', { class: 'btn sm ghost', onclick: () => set(DEFAULT_THEME, true) }, 'Reset to the default')));
@@ -513,7 +526,7 @@ function designPanel(ctx, retheme) {
   const card = (d) => {
     if (d.error) return h('div', { class: 'docs-preset docs-ai-card failed' }, h('strong', null, d.directionName), h('span', { class: 'faint' }, `Couldn't be used: ${d.error}`));
     const c = d.theme.colors[d.theme.mode === 'dark' ? 'dark' : 'light'];
-    return h('button', { class: ['docs-preset docs-ai-card', same(d.theme, theme) && 'on'], onclick: () => { set(d.theme, true); } },
+    return h('button', { class: ['docs-preset docs-ai-card', same(d.theme, theme) && 'on'], 'data-ai': String(ctx.aiDesigns.indexOf(d)), onclick: () => { set(d.theme, true); } },
       h('span', { class: 'docs-swatches' }, [c.bg, c.accent, c.codeBg, c.text].map((x) => h('i', { style: { background: x } }))),
       h('strong', null, d.name || d.directionName),
       h('span', { class: 'faint' }, d.directionName),
@@ -529,6 +542,20 @@ function designPanel(ctx, retheme) {
       (b.colors || []).length < 5 ? h('button', { class: 'btn sm ghost', onclick: () => { b.colors = [...(b.colors || []), '#3366cc']; saveBrand(); drawAi(); } }, '+ Colour') : null,
       !(b.colors || []).length ? h('span', { class: 'faint' }, p.logo ? 'No clear colours in the logo.' : 'Choose a logo on the first screen to pick up its colours, or add them here.') : null);
     const audience = h('input', { class: 'input', value: b.audience || '', placeholder: 'Fintech engineers integrating payouts', oninput: (e) => { b.audience = e.target.value; saveBrand(); } });
+    const site = h('input', { class: 'input', value: b.website || '', placeholder: 'example.com', spellcheck: 'false', oninput: (e) => { b.website = e.target.value; saveBrand(); } });
+    const read = h('button', { class: 'btn sm', onclick: async () => {
+      if (!site.value.trim()) { toast('Enter the website first'); return; }
+      read.disabled = true; read.textContent = 'Reading…';
+      try {
+        const facts = await readWebsite(site.value.trim());
+        b.themeColor = facts.themeColor;
+        b.websiteFonts = facts.fonts;
+        b.colors = [...new Set([...(b.colors || []), ...facts.colors])].slice(0, 5);
+        ctx.aiNote = `From the website: ${facts.colors.length ? `${facts.colors.length} colour${facts.colors.length === 1 ? '' : 's'}` : 'no strong colours'}${facts.fonts.length ? `, fonts ${facts.fonts.map((f) => f.name).join(', ')}` : ''}. Only these colours and font names are used.`;
+        saveBrand(); drawAi();
+      } catch (e) { toast(errText(e), { error: true }); read.disabled = false; read.textContent = 'Read colours and fonts'; }
+    } }, 'Read colours and fonts');
+    const fontChips = (b.websiteFonts || []).length ? h('div', { class: 'row', style: { gap: '4px', flexWrap: 'wrap' } }, b.websiteFonts.map((f, i) => h('span', { class: 'chip', title: f.id ? `In the font catalogue as ${FONTS[f.id]?.name || f.id}` : 'Not in the catalogue: the AI picks the closest voice' }, `${f.name}${f.id ? '' : ' (closest match)'}`, h('button', { class: 'btn ghost sm', title: 'Don\'t use this font name', onclick: () => { b.websiteFonts.splice(i, 1); saveBrand(); drawAi(); } }, '×')))) : null;
     const likes = h('input', { class: 'input', value: b.likes || '', placeholder: 'Optional, such as Stripe, Linear', oninput: (e) => { b.likes = e.target.value; saveBrand(); } });
     const tones = h('div', { class: 'row', style: { gap: '4px', flexWrap: 'wrap' } }, TONES.map((t) => h('button', { class: ['btn sm ghost docs-chip', (b.tone || []).includes(t) && 'on'], onclick: () => {
       const has = (b.tone || []).includes(t);
@@ -569,6 +596,8 @@ function designPanel(ctx, retheme) {
     aiBox.replaceChildren(
       h('h4', { class: 'docs-sub', style: { marginTop: 0 } }, 'Design with AI'),
       h('div', { class: 'form-grid docs-design-grid' },
+        h('label', null, 'Website'), h('div', { class: 'row', style: { gap: '6px' } }, site, read),
+        fontChips ? h('label', null, 'Website fonts') : null, fontChips,
         h('label', null, 'Brand colours'), swatches,
         h('label', null, 'Audience'), audience,
         h('label', null, 'Tone'), tones,
@@ -584,6 +613,31 @@ function designPanel(ctx, retheme) {
   describeFonts(ctx.fonts);
   draw();
   return body;
+}
+
+/**
+ * Brand facts from a company website: the home page and up to four of its
+ * stylesheets, fetched like any request. Only colours and font names come
+ * back. Cookies the site sets during this are removed again.
+ */
+async function readWebsite(address) {
+  let start;
+  try { start = new URL(/^https?:\/\//i.test(address) ? address : `https://${address}`); } catch { throw new Error('Enter a website address, such as example.com.'); }
+  const key = (c) => `${c.domain}|${c.path}|${c.name}`;
+  const before = new Set((await bridge.listCookies().catch(() => [])).map(key));
+  const get = async (url, accept) => {
+    const res = await bridge.send({ method: 'GET', url, headers: [{ key: 'Accept', value: accept }, { key: 'User-Agent', value: 'Dispatch documentation designer' }], body: null, settings: { timeoutMs: 10000, followRedirects: true, verifySsl: true } });
+    if (res.status >= 400) throw new Error(`${new URL(url).host} answered ${res.status}.`);
+    return { text: String(res.bodyText || '').slice(0, 1_500_000), url: res.url || url };
+  };
+  try {
+    const page = await get(start.href, 'text/html');
+    const sheets = [];
+    for (const link of stylesheetLinks(page.text, page.url)) { try { sheets.push((await get(link, 'text/css')).text); } catch { /* one stylesheet less */ } }
+    return brandFacts(page.text, sheets);
+  } finally {
+    for (const c of await bridge.listCookies().catch(() => [])) if (!before.has(key(c))) await bridge.deleteCookie(c.domain, c.path, c.name).catch(() => {});
+  }
 }
 
 /** Calls the chosen AI model for a structured answer. */
