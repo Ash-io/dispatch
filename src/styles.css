@@ -1,3 +1,5 @@
+/* Text colours (--text-3, --ok, --warn, --err, --info, --accent-ink) meet WCAG AA (4.5:1) on every surface,
+   in light and dark. The admin panel (server/admin, worker/admin) uses the same values. */
 :root {
   --bg: #f6f6f4;
   --panel: #ffffff;
@@ -9,17 +11,17 @@
   --border-strong: #cfcfc8;
   --text: #1d1f23;
   --text-2: #5b5e66;
-  --text-3: #8b8e95;
+  --text-3: #6c6f77;
   --accent: #7fd6a4;
-  --accent-ink: #1e7c52;
+  --accent-ink: #18694a;
   --accent-soft: rgba(127, 214, 164, 0.16);
   --accent-text: #0d3725;
   --focus: rgba(127, 214, 164, 0.45);
-  --ok: #1f8a4c;
-  --warn: #b7791f;
-  --err: #d23f3f;
-  --info: #2f6fd6;
-  --var-ok: #1f8a4c;
+  --ok: #1a7a43;
+  --warn: #8f5c10;
+  --err: #bf3030;
+  --info: #2763c4;
+  --var-ok: #1a7a43;
   --var-ok-bg: rgba(31, 138, 76, 0.1);
   --var-bad: #d23f3f;
   --var-bad-bg: rgba(210, 63, 63, 0.1);
@@ -53,7 +55,7 @@
     --border-strong: #3a3b42;
     --text: #e8e8ea;
     --text-2: #a4a6ad;
-    --text-3: #72747c;
+    --text-3: #8d9098;
     --accent: #7fd6a4;
     --accent-ink: #7fd6a4;
     --accent-soft: rgba(127, 214, 164, 0.16);
@@ -87,7 +89,7 @@
   --bg: #17181b; --panel: #1d1e22; --panel-2: #232429; --sidebar: #141518;
   --hover: rgba(255,255,255,.05); --active: rgba(255,255,255,.09);
   --border: #2c2d33; --border-strong: #3a3b42;
-  --text: #e8e8ea; --text-2: #a4a6ad; --text-3: #72747c;
+  --text: #e8e8ea; --text-2: #a4a6ad; --text-3: #8d9098;
   --accent: #7fd6a4; --accent-ink: #7fd6a4; --accent-soft: rgba(127,214,164,.16); --accent-text: #0d3725; --focus: rgba(127,214,164,.45);
   --ok: #4cc27f; --warn: #e0a84a; --err: #f06b6b; --info: #6aa3ff;
   --var-ok: #4cc27f; --var-ok-bg: rgba(76,194,127,.14); --var-bad: #f06b6b; --var-bad-bg: rgba(240,107,107,.14);

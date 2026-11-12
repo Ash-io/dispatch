@@ -1,6 +1,5 @@
 /* Dispatch admin panel. Tokens are copied from the desktop app's src/styles.css:
-   keep them in step so the two look like one product. Text colours here are
-   darker (light) or lighter (dark) where the app's fall short of WCAG AA. */
+   keep them in step so the two look like one product. Text colours meet WCAG AA. */
 
 :root {
   --bg: #f6f6f4;
@@ -15,7 +14,7 @@
   --text-2: #5b5e66;
   --text-3: #6c6f77;
   --accent: #7fd6a4;
-  --accent-ink: #1e7c52;
+  --accent-ink: #18694a;
   --accent-soft: rgba(127, 214, 164, 0.16);
   --accent-text: #0d3725;
   --focus: rgba(127, 214, 164, 0.45);
