@@ -36,10 +36,10 @@
   --m-delete: #b9242a;
   --m-other: #5d616a;
   --code-key: #9a3e9e;
-  --code-str: #1f7a4a;
-  --code-num: #2f6fd6;
-  --code-bool: #b7591f;
-  --code-null: #8b8e95;
+  --code-str: #1b7747;
+  --code-num: #2666cc;
+  --code-bool: #aa4d0c;
+  --code-null: #65686e;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
   --radius: 6px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
@@ -86,7 +86,7 @@
     --code-str: #8fd19e;
     --code-num: #86b8ff;
     --code-bool: #f0a66b;
-    --code-null: #7c7f87;
+    --code-null: #a0a3ac;
     --shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
@@ -102,7 +102,7 @@
   --warn-bg: rgba(224,168,74,.12); --warn-line: rgba(224,168,74,.3); --err-line: rgba(240,107,107,.32);
   --var-ok: #4cc27f; --var-ok-bg: rgba(76,194,127,.14); --var-bad: #f06b6b; --var-bad-bg: rgba(240,107,107,.14);
   --m-get: #4cc27f; --m-post: #e0a84a; --m-put: #6aa3ff; --m-patch: #b48cff; --m-delete: #f77171; --m-other: #9a9da5;
-  --code-key: #d59ae0; --code-str: #8fd19e; --code-num: #86b8ff; --code-bool: #f0a66b; --code-null: #7c7f87;
+  --code-key: #d59ae0; --code-str: #8fd19e; --code-num: #86b8ff; --code-bool: #f0a66b; --code-null: #a0a3ac;
   --shadow: 0 10px 40px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.4);
   color-scheme: dark;
 }

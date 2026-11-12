@@ -1,4 +1,4 @@
-/* Text colours (--text-3, --ok, --warn, --err, --info, --accent-ink, the --m-* method colours) meet WCAG AA (4.5:1) on every surface,
+/* Text colours (--text-3, --ok, --warn, --err, --info, --accent-ink, the --m-* method colours, the --code-* syntax colours) meet WCAG AA (4.5:1) on every surface,
    in light and dark. The admin panel (server/admin, worker/admin) uses the same values. */
 :root {
   --bg: #f6f6f4;
@@ -32,10 +32,10 @@
   --m-delete: #b9242a;
   --m-other: #5d616a;
   --code-key: #9a3e9e;
-  --code-str: #1f7a4a;
-  --code-num: #2f6fd6;
-  --code-bool: #b7591f;
-  --code-null: #8b8e95;
+  --code-str: #1b7747;
+  --code-num: #2666cc;
+  --code-bool: #aa4d0c;
+  --code-null: #65686e;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
   --radius: 6px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
@@ -79,7 +79,7 @@
     --code-str: #8fd19e;
     --code-num: #86b8ff;
     --code-bool: #f0a66b;
-    --code-null: #7c7f87;
+    --code-null: #a0a3ac;
     --shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
@@ -94,7 +94,7 @@
   --ok: #4cc27f; --warn: #e0a84a; --err: #f06b6b; --info: #6aa3ff;
   --var-ok: #4cc27f; --var-ok-bg: rgba(76,194,127,.14); --var-bad: #f06b6b; --var-bad-bg: rgba(240,107,107,.14);
   --m-get: #4cc27f; --m-post: #e0a84a; --m-put: #6aa3ff; --m-patch: #b48cff; --m-delete: #f77171; --m-other: #9a9da5;
-  --code-key: #d59ae0; --code-str: #8fd19e; --code-num: #86b8ff; --code-bool: #f0a66b; --code-null: #7c7f87;
+  --code-key: #d59ae0; --code-str: #8fd19e; --code-num: #86b8ff; --code-bool: #f0a66b; --code-null: #a0a3ac;
   --shadow: 0 10px 40px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.4);
   color-scheme: dark;
 }
@@ -382,7 +382,7 @@ pre.body.wrap { white-space: pre-wrap; word-break: break-all; }
 .code-hl-input { position: relative; background: transparent; color: transparent; caret-color: var(--text); }
 .code-hl-input::placeholder { color: var(--text-3); }
 .code-hl-input::selection { color: transparent; background: var(--focus); }
-.c-com { color: var(--text-3); font-style: italic; } .c-kw { color: var(--code-key); } .c-var { color: var(--var-ok); background: var(--var-ok-bg); border-radius: 3px; }
+.c-com { color: var(--text-2); font-style: italic; } .c-kw { color: var(--code-key); } .c-var { color: var(--var-ok); background: var(--var-ok-bg); border-radius: 3px; }
 .c-var.bad { color: var(--var-bad, var(--err)); background: var(--var-bad-bg, transparent); }
 /* CodeMirror editor and response viewer (src/js/ui/codeedit.js). */
 .cm-host { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
