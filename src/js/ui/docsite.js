@@ -511,8 +511,16 @@ function renderReview(ctx, result, view = {}) {
 
   const blockers = [];
   if (result.secretHits.length) blockers.push(`${result.secretHits.length} possible secret${result.secretHits.length === 1 ? '' : 's'} found`);
-  if (result.gaps.length) blockers.push(`${result.gaps.length} gap${result.gaps.length === 1 ? '' : 's'} to resolve`);
+  const hasGaps = result.gaps.length > 0;
   const publish = h('button', { class: 'btn primary', disabled: blockers.length > 0, onclick: async (e) => {
+    if (hasGaps) {
+      const proceed = await confirmDialog({
+        title: `Publish with ${result.gaps.length} unresolved gap${result.gaps.length === 1 ? '' : 's'}?`,
+        message: 'Rows without descriptions will be published as they are, without descriptions.',
+        confirm: 'Publish anyway',
+      });
+      if (!proceed) return;
+    }
     e.target.disabled = true; e.target.textContent = 'Publishing…';
     try {
       const out = await api('POST', `/docs-sites/${enc(site.id)}/versions`, { files: ctx.result.files, changelog: ctx.result.changelog.join('\n') });
@@ -538,7 +546,7 @@ function renderReview(ctx, result, view = {}) {
     result.secretHits.length ? h('div', { class: 'note err' }, icon('alert'), h('div', null, h('p', { style: { margin: 0 } }, 'These look like real credentials. Remove them from the collection\'s examples (or turn off history), then generate again.'), h('ul', null, hitRows))) : null,
     h('div', { class: 'docs-review' }, h('div', null, h('div', { class: 'docs-preview-head' }, list, toolbar), wrap), h('div', null, tabBar, tabBody)),
     h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px', marginTop: '12px' } },
-      blockers.length ? h('span', { class: 'faint', style: { marginRight: 'auto' } }, `Can't publish yet: ${blockers.join(', ')}.`) : null,
+      blockers.length ? h('span', { class: 'faint', style: { marginRight: 'auto' } }, `Can't publish: ${blockers.join(', ')}.`) : hasGaps ? h('span', { class: 'faint', style: { marginRight: 'auto' } }, `${result.gaps.length} row${result.gaps.length === 1 ? '' : 's'} without descriptions.`) : null,
       h('button', { class: 'btn ghost', onclick: () => renderSite(ctx) }, 'Back'), download, publish)].filter(Boolean));
   show(current);
 }

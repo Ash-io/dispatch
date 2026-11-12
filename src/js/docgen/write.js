@@ -115,9 +115,9 @@ export function plan(sheet, { pinned = {} } = {}) {
       if (ok) for (const f of ok.fields.slice(0, 30)) want(targets, `${base}.resp.${ok.code}.${f.path}`, 'field', `What the response field \`${f.path}\` is.`, `${label(sheet, ep)}: response field \`${f.path}\``, own);
     }
     if (targets.length) {
-      // Keep each call a manageable size.
-      for (let i = 0; i < targets.length; i += 60) {
-        const slice = targets.slice(i, i + 60);
+      // Keep each call a manageable size (20 targets fits well within context and token limits).
+      for (let i = 0; i < targets.length; i += 20) {
+        const slice = targets.slice(i, i + 20);
         jobs.push({ name: g.name, targets: slice, allowed: new Set(slice.flatMap((t) => t.factIds)) });
       }
     }
