@@ -179,7 +179,7 @@ export function derivePalette({ accent, hue, tint = 0.012, code = 'dark' }) {
   const pane = (dark) => (dark ? { codeBg: n(0.2, tint * 1.4), codeText: n(0.92, tint * 0.6) } : { codeBg: n(0.95, tint * 1.2), codeText: n(0.25, tint) });
 
   const lightBg = n(0.985, tint * 0.6);
-  const lightSurface = n(1, tint * 0.2);
+  const lightSurface = n(0.997, tint * 0.25);
   const lightAccent = fixContrast(fromOklch({ ...a, l: Math.min(a.l, 0.55) }), [lightBg, lightSurface], 4.6);
   const light = {
     bg: lightBg, surface: lightSurface, text: n(0.22), muted: n(0.48, tint * 1.2), line: n(0.9, tint * 1.2),

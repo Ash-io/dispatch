@@ -1352,6 +1352,7 @@ import { lint, plan, writeAll, repeatedOpenings } from '../src/js/docgen/write.j
 import { buildSite, markdown, schemaFrom, previewHtml, highlightJson } from '../src/js/docgen/build.js';
 import { PRESETS, DEFAULT_THEME, LAYOUTS, contrast, fixContrast, validateTheme, normalizeTheme, contrastFailures, contrastReport, withAccent, themeCss, toOklch, fromOklch, fontFiles, fontFaceCss, fontLicenses, FONTS } from '../src/js/docgen/theme.js';
 import { WEB_FONTS } from '../src/js/docgen/fonts.js';
+import { paletteFromPixels, siteShape, layoutsFor, THEME_SCHEMA, designSystem, designPrompt, revisePrompt, designProblems, correctDesign, designThemes, reviseTheme, DIRECTIONS } from '../src/js/docgen/design.js';
 import { generateDocs, OMIT } from '../src/js/docgen/index.js';
 import { zip, crc32 } from '../src/js/docgen/zip.js';
 
@@ -1694,4 +1695,101 @@ test('web fonts are published inline with their licences, and leave pages alone 
   const without = buildSite(sheet, {}, { site: { name: 'S' }, theme });
   assert.ok(!without.some((f) => f.path.startsWith('assets/fonts')));
   assert.ok(!without.find((f) => f.path === 'index.html').body.includes('fonts.css'));
+});
+
+// ---------------------------------------------------------------- AI designs
+
+const designAnswer = (preset = 'ledger', over = (t) => t) => {
+  const { version, extraCss, ...rest } = JSON.parse(JSON.stringify(PRESETS.find((p) => p.id === preset).theme));
+  void version; void extraCss;
+  return over({ name: 'Warm ledger', rationale: 'Paper tones suit a payments brand.', ...rest });
+};
+const SHAPE = { groups: 2, endpoints: 3, hasQuickstart: true };
+
+test('brand colours come from a logo\'s pixels, ignoring white, black, grey and transparency', () => {
+  const px = [];
+  const fill = (n, c) => { for (let i = 0; i < n; i++) px.push(...c); };
+  fill(600, [20, 120, 110, 255]); fill(250, [240, 120, 30, 255]); fill(300, [255, 255, 255, 255]); fill(200, [10, 10, 10, 255]); fill(200, [128, 128, 128, 255]); fill(400, [200, 0, 0, 0]);
+  assert.deepEqual(paletteFromPixels(new Uint8ClampedArray(px)), ['#14786e', '#f0781e']);
+  assert.deepEqual(paletteFromPixels(new Uint8ClampedArray([255, 255, 255, 255, 0, 0, 0, 255])), []);
+});
+
+test('the design prompt carries brand facts and counts, never the API', () => {
+  const scrub = createScrubber();
+  const sheet = buildFacts(gatherEndpoints(DOCS_COLLECTION, { scrub }), {});
+  const shape = siteShape(sheet);
+  assert.deepEqual(Object.keys(shape).sort(), ['endpoints', 'groups', 'hasQuickstart']);
+  const prompt = designPrompt({ brand: { name: 'Shop API', colors: ['#14786e'], audience: 'Merchants', tone: ['warm'], likes: 'Stripe' }, shape, direction: DIRECTIONS[1] }) + designSystem();
+  for (const ep of sheet.endpoints) {
+    assert.ok(!prompt.includes(ep.displayPath), ep.displayPath);
+    assert.ok(!prompt.includes(ep.name), ep.name);
+  }
+  assert.match(prompt, /Brand colours: #14786e/);
+  assert.match(prompt, /Audience: Merchants/);
+  assert.match(prompt, /DIRECTION: Bolder/);
+  assert.match(prompt, /3 requests in 2 groups/);
+  for (const id of Object.keys(WEB_FONTS)) assert.ok(designSystem().includes(`  - ${id}: `), id);
+  assert.match(revisePrompt({ brand: {}, shape, theme: designAnswer(), instruction: 'less rounded' }), /CURRENT THEME\n\{.*"layout":"split"/s);
+});
+
+test('the design schema accepts every preset and only offers layouts that suit the site', () => {
+  for (const p of PRESETS) assert.deepEqual(checkSchema(designAnswer(p.id), THEME_SCHEMA), [], p.id);
+  assert.ok(checkSchema({ ...designAnswer(), type: { ...designAnswer().type, display: 'comic-sans' } }, THEME_SCHEMA).length);
+  assert.deepEqual(layoutsFor({ groups: 3, endpoints: 12 }), ['reference', 'split', 'editorial', 'index']);
+  assert.deepEqual(layoutsFor({ groups: 30, endpoints: 400 }), ['reference', 'split']);
+  assert.deepEqual(designProblems(designAnswer(), SHAPE).all, []);
+});
+
+test('design problems are split into fatal and fixable, and fixable ones are corrected in code', () => {
+  const bad = designAnswer('ledger', (t) => { t.colors.light.bg = '#ffffff'; t.colors.light.muted = '#eeeeee'; t.colors.dark.bg = '#dddddd'; t.layout = 'editorial'; return t; });
+  const big = { groups: 30, endpoints: 400 };
+  const p = designProblems(bad, big);
+  assert.deepEqual(p.fatal, []);
+  assert.ok(p.fixable.some((x) => /pure white/.test(x)));
+  assert.ok(p.fixable.some((x) => /too light for a dark palette/.test(x)));
+  assert.ok(p.fixable.some((x) => /layout "editorial" doesn't suit/.test(x)));
+  assert.ok(p.fixable.some((x) => /muted on bg \(light\)/.test(x)));
+  const { theme, adjusted } = correctDesign(validateTheme(bad).theme, big);
+  assert.equal(theme.layout, 'reference');
+  assert.notEqual(theme.colors.light.bg, '#ffffff');
+  assert.deepEqual(contrastFailures(theme), []);
+  assert.deepEqual(designProblems({ ...theme, name: 'x', rationale: 'y' }, big).all, []);
+  assert.ok(adjusted.length >= 4);
+  assert.ok(designProblems({ ...designAnswer(), mode: 'sepia' }, SHAPE).fatal.length);
+});
+
+test('three designs: problems are sent back once, then fixed or the design is dropped', async () => {
+  const prompts = [];
+  let n = 0;
+  const ask = async (system, prompt, schema) => {
+    assert.equal(schema, THEME_SCHEMA);
+    assert.match(system, /Never use pure #000000 or #ffffff/);
+    prompts.push(prompt);
+    n++;
+    if (n === 1) return designAnswer('ledger', (t) => { t.colors.light.muted = '#eeeeee'; return t; }); // contrast: retried
+    if (n === 2) return designAnswer('ledger'); // fixed on retry
+    if (n === 3) return designAnswer('signal', (t) => { t.type.display = 'comic-sans'; return t; }); // fatal
+    if (n === 4) throw new Error('The answer wasn\'t valid JSON.'); // retry fails too: dropped
+    if (n === 5) return designAnswer('field-notes', (t) => { t.colors.light.text = '#cccccc'; return t; });
+    return designAnswer('field-notes', (t) => { t.colors.light.text = '#cccccc'; return t; }); // still failing: fixed in code
+  };
+  const designs = await designThemes({ ask, brand: { name: 'Shop', colors: ['#14786e'] }, shape: SHAPE });
+  assert.equal(n, 6);
+  assert.match(prompts[1], /previous answer had these problems:\n- muted on bg \(light\)/);
+  assert.match(prompts[3], /isn't in the font catalogue/);
+  assert.deepEqual(designs.map((d) => d.direction), ['brand', 'bolder', 'quieter']);
+  assert.ok(designs[0].theme && designs[0].adjusted.length === 0);
+  assert.match(designs[1].error, /valid JSON/);
+  assert.ok(designs[2].theme);
+  assert.ok(designs[2].adjusted.some((a) => /text on bg \(light\)/.test(a)));
+  assert.deepEqual(contrastFailures(designs[2].theme), []);
+  assert.equal(designs[0].name, 'Warm ledger');
+});
+
+test('asking for a change sends the current theme and the instruction, through the same checks', async () => {
+  let seen = '';
+  const changed = await reviseTheme({ ask: async (s, prompt) => { seen = prompt; return designAnswer('ledger', (t) => { t.shape.radius = 0; return t; }); }, brand: { name: 'Shop' }, shape: SHAPE, theme: designAnswer(), instruction: 'square corners' });
+  assert.match(seen, /CHANGE ASKED FOR\nsquare corners/);
+  assert.ok(!seen.includes('Warm ledger'), 'the name and rationale are not sent back');
+  assert.equal(changed.theme.shape.radius, 0);
 });

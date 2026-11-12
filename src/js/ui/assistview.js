@@ -106,7 +106,7 @@ const consented = (id) => state.settings.aiConsent === true ? id === 'anthropic'
 export async function ready({ purpose } = {}) {
   let providers = await bridge.aiProviders().catch(() => []);
   for (const p of providers) if (!p.models?.length) { try { Object.assign(p, await bridge.aiRefreshModels(p.id)); } catch { /* shown in Settings */ } }
-  if (purpose === 'docs') {
+  if (purpose === 'docs' || purpose === 'design') {
     const docs = chooseModel(state.settings.aiDocsModel, providers);
     if (docs && state.settings.aiDocsModel && docs.provider === state.settings.aiDocsModel.provider && docs.model === state.settings.aiDocsModel.model) {
       const p = providers.find((x) => x.id === docs.provider);
@@ -123,7 +123,9 @@ export async function ready({ purpose } = {}) {
 }
 
 function consentFor(p, choice, purpose) {
-  const what = purpose === 'docs'
+  const what = purpose === 'design'
+    ? `Designing documentation sends ${p.label} (${p.baseUrl}) the site's name, the brand colours, audience, tone and liked sites you entered, and how many groups and requests the site has. No requests, examples or variables are sent.`
+    : purpose === 'docs'
     ? `Writing documentation sends ${p.label} (${p.baseUrl}) facts about the collection: request names, paths, parameter and field names, types, and example values after secrets and personal data have been replaced.`
     : `Requests you ask about are sent to ${p.label} (${p.baseUrl}): method, URL and headers as written ({{variables}} are not filled in, and credential headers are redacted), the body, and for responses the status, headers and up to 30 KB of body.`;
   return new Promise((resolve) => {

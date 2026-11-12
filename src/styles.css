@@ -755,3 +755,11 @@ progress::-webkit-progress-value { background: var(--accent); }
 .docs-logo img { max-height: 28px; max-width: 160px; }
 .docs-design-grid.form-grid { grid-template-columns: 104px minmax(0, 1fr); gap: 8px 10px; align-items: center; }
 .docs-design-grid .select { width: 100%; }
+.docs-sub { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); margin: 14px 0 6px; }
+.docs-ai { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 4px; }
+.docs-ai .input { flex: 1; min-width: 0; }
+.docs-chip.on { background: var(--panel-2); color: var(--text); border-color: var(--accent); }
+.docs-brand-swatch { display: inline-flex; align-items: center; gap: 0; }
+.docs-brand-swatch input[type=color] { width: 30px; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 5px; background: none; }
+.docs-ai-card .docs-ai-why { font-size: 11.5px; line-height: 1.35; color: var(--text-2); }
+.docs-ai-card.failed { cursor: default; opacity: .8; }

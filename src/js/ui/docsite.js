@@ -15,6 +15,7 @@ import { previewHtml } from '../docgen/build.js';
 import { PRESETS, DEFAULT_THEME, LAYOUTS, FONTS, MODES, HEADERS, NAVS, DENSITIES, validateTheme, normalizeTheme, contrastFailures, withAccent, isHex } from '../docgen/theme.js';
 import { zip, toBase64 } from '../docgen/zip.js';
 import { loadFonts } from './fontcache.js';
+import { TONES, designThemes, reviseTheme, siteShape, paletteFromPixels } from '../docgen/design.js';
 
 const api = (method, path, body) => bridge.postman(method, path, body);
 const enc = encodeURIComponent;
@@ -145,7 +146,13 @@ function generateSection(ctx) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    try { p.logo = await logoToPng(file); save(); logoPreview.replaceChildren(h('img', { src: p.logo, alt: '' })); } catch (er) { toast(errText(er), { error: true }); }
+    try {
+      const { png, colors } = await logoToPng(file);
+      p.logo = png;
+      p.brand = { ...(p.brand || {}), colors: colors.length ? colors : p.brand?.colors || [] };
+      save();
+      logoPreview.replaceChildren(h('img', { src: p.logo, alt: '' }));
+    } catch (er) { toast(errText(er), { error: true }); }
   } });
   const logo = h('div', { class: 'row', style: { gap: '8px' } }, logoPreview,
     h('button', { class: 'btn sm', onclick: () => logoInput.click() }, p.logo ? 'Change' : 'Choose…'),
@@ -213,10 +220,7 @@ async function runGeneration(ctx) {
       const choice = await ready({ purpose: 'docs' });
       if (!choice) { renderSite(ctx); return; }
       step(`Writing with ${choice.model}`);
-      ask = async (system, prompt, schema) => {
-        const answer = await bridge.aiAsk({ provider: choice.provider, model: choice.model, system, prompt, schema }, `docs-${uuid()}`, () => {});
-        return parseStructured(answer.text, schema);
-      };
+      ask = askWith(choice);
     }
     let verified = {};
     if (p.verifyEnv) { const li = step('Running requests to verify examples…'); verified = await verifyRun(ctx); li.textContent = `Ran ${Object.keys(verified).length} requests: ${Object.values(verified).filter((v) => v.ok).length} passed`; }
@@ -385,7 +389,10 @@ async function siteTheme(ctx, p) {
   return isHex(p.accent) ? withAccent(DEFAULT_THEME, p.accent) : DEFAULT_THEME;
 }
 
-/** Any image the webview can draw, as a PNG data URL at most 96 px tall. Drawing it also drops any script an SVG carried. */
+/**
+ * Any image the webview can draw, as a PNG data URL at most 96 px tall, with
+ * its main colours. Drawing it also drops any script an SVG carried.
+ */
 async function logoToPng(file) {
   if (file.size > 2 * 1024 * 1024) throw new Error('Choose an image under 2 MB.');
   const url = URL.createObjectURL(file);
@@ -402,10 +409,13 @@ async function logoToPng(file) {
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(w0 * scale));
     canvas.height = Math.max(1, Math.round(h0 * scale));
-    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    const g = canvas.getContext('2d');
+    g.drawImage(img, 0, 0, canvas.width, canvas.height);
     const data = canvas.toDataURL('image/png');
     if (data.length > 300_000) throw new Error('That logo is too detailed to publish. Try a simpler or smaller image.');
-    return data;
+    let colors = [];
+    try { colors = paletteFromPixels(g.getImageData(0, 0, canvas.width, canvas.height).data); } catch { /* the colours can be entered by hand */ }
+    return { png: data, colors };
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -425,6 +435,9 @@ function designPanel(ctx, retheme) {
       : 'Web fonts are downloaded from jsDelivr the first time a design uses them, checked against their published checksums, and kept on this device. They\'re published inside the site with their licences, so readers\' browsers load nothing from anywhere else.';
     fontNote.classList.toggle('err-text', !!fonts?.missing?.length);
   };
+  const p = prefs(ctx.site.id);
+  p.brand = p.brand || { colors: [], audience: '', tone: [], likes: '' };
+  const aiBox = h('div', { class: 'docs-ai' });
   const describe = (fixes) => {
     note.textContent = fixes.length
       ? `Adjusted to keep text readable: ${fixes.slice(0, 3).join('; ')}${fixes.length > 3 ? `, and ${fixes.length - 3} more` : ''}.`
@@ -434,6 +447,8 @@ function designPanel(ctx, retheme) {
     const raw = validateTheme(next).theme;
     describe(contrastFailures(raw));
     theme = normalizeTheme(raw).theme;
+    fontNote.classList.remove('err-text');
+    fontNote.textContent = 'Getting fonts and updating the preview…';
     retheme(theme).then((fonts) => { if (fonts) describeFonts(fonts); }).catch((e) => toast(errText(e), { error: true }));
     if (redraw) draw();
     else body.querySelectorAll('.docs-preset').forEach((el) => el.classList.toggle('on', same(PRESETS.find((pr) => pr.id === el.dataset.id).theme, theme)));
@@ -458,9 +473,13 @@ function designPanel(ctx, retheme) {
       const out = h('span', { class: 'faint' }, `${value}${unit}`);
       return h('div', { class: 'row', style: { gap: '8px' } }, h('input', { type: 'range', min, max, step, value, oninput: (e) => { out.textContent = `${e.target.value}${unit}`; }, onchange: (e) => onchange(Number(e.target.value)) }), out);
     };
+    drawAi();
     body.replaceChildren(
       h('p', { class: 'hint', style: { marginTop: 0 } }, 'Start from a design, then adjust it. The preview updates as you go, and the design is published with the site.'),
+      aiBox,
+      h('h4', { class: 'docs-sub' }, 'Presets'),
       presets,
+      h('h4', { class: 'docs-sub' }, 'Adjust'),
       h('div', { class: 'form-grid docs-design-grid' },
         h('label', null, 'Layout'), h('div', null, select(theme.layout, Object.keys(LAYOUTS).map((k) => [k, cap(k)]), (v) => { edit((t) => { t.layout = v; }); layoutHint.textContent = LAYOUTS[v]; }), layoutHint),
         h('label', null, 'Light or dark'), select(theme.mode, MODES.map((m) => [m, m === 'auto' ? 'Follow the reader\'s setting' : `Always ${m}`]), (v) => edit((t) => { t.mode = v; })),
@@ -480,8 +499,97 @@ function designPanel(ctx, retheme) {
       fontNote,
       h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '8px' } }, h('button', { class: 'btn sm ghost', onclick: () => set(DEFAULT_THEME, true) }, 'Reset to the default')));
   };
+  // ---- AI designs: brand inputs, three directions, and changes in plain words.
+  const saveBrand = () => S.saveSettings();
+  const shape = () => siteShape(ctx.result.sheet);
+  const brand = () => ({ name: ctx.site.name, ...p.brand });
+  const askAi = async () => {
+    const { ready } = await import('./assistview.js');
+    const choice = await ready({ purpose: 'design' });
+    if (!choice) return null;
+    const providers = await bridge.aiProviders().catch(() => []);
+    return { ask: askWith(choice), choice, local: !!providers.find((x) => x.id === choice.provider)?.local };
+  };
+  const card = (d) => {
+    if (d.error) return h('div', { class: 'docs-preset docs-ai-card failed' }, h('strong', null, d.directionName), h('span', { class: 'faint' }, `Couldn't be used: ${d.error}`));
+    const c = d.theme.colors[d.theme.mode === 'dark' ? 'dark' : 'light'];
+    return h('button', { class: ['docs-preset docs-ai-card', same(d.theme, theme) && 'on'], onclick: () => { set(d.theme, true); } },
+      h('span', { class: 'docs-swatches' }, [c.bg, c.accent, c.codeBg, c.text].map((x) => h('i', { style: { background: x } }))),
+      h('strong', null, d.name || d.directionName),
+      h('span', { class: 'faint' }, d.directionName),
+      h('span', { class: 'docs-ai-why' }, d.rationale),
+      d.adjusted.length ? h('span', { class: 'faint', title: d.adjusted.join('\n') }, `${d.adjusted.length} adjustment${d.adjusted.length === 1 ? '' : 's'} made for readability`) : null);
+  };
+  function drawAi() {
+    const b = p.brand;
+    const swatches = h('div', { class: 'row', style: { gap: '4px', flexWrap: 'wrap' } },
+      (b.colors || []).map((col, i) => h('span', { class: 'docs-brand-swatch' },
+        h('input', { type: 'color', value: col, title: col, onchange: (e) => { b.colors[i] = e.target.value; saveBrand(); } }),
+        h('button', { class: 'btn ghost sm', title: 'Remove', onclick: () => { b.colors.splice(i, 1); saveBrand(); drawAi(); } }, '×'))),
+      (b.colors || []).length < 5 ? h('button', { class: 'btn sm ghost', onclick: () => { b.colors = [...(b.colors || []), '#3366cc']; saveBrand(); drawAi(); } }, '+ Colour') : null,
+      !(b.colors || []).length ? h('span', { class: 'faint' }, p.logo ? 'No clear colours in the logo.' : 'Choose a logo on the first screen to pick up its colours, or add them here.') : null);
+    const audience = h('input', { class: 'input', value: b.audience || '', placeholder: 'Fintech engineers integrating payouts', oninput: (e) => { b.audience = e.target.value; saveBrand(); } });
+    const likes = h('input', { class: 'input', value: b.likes || '', placeholder: 'Optional, such as Stripe, Linear', oninput: (e) => { b.likes = e.target.value; saveBrand(); } });
+    const tones = h('div', { class: 'row', style: { gap: '4px', flexWrap: 'wrap' } }, TONES.map((t) => h('button', { class: ['btn sm ghost docs-chip', (b.tone || []).includes(t) && 'on'], onclick: () => {
+      const has = (b.tone || []).includes(t);
+      if (!has && (b.tone || []).length >= 3) { toast('Pick up to three'); return; }
+      b.tone = has ? b.tone.filter((x) => x !== t) : [...(b.tone || []), t];
+      saveBrand(); drawAi();
+    } }, t)));
+    const status = h('p', { class: 'hint', style: { margin: '6px 0 0' } }, ctx.aiNote || '');
+    const results = h('div', { class: 'docs-presets' }, (ctx.aiDesigns || []).map(card));
+    const go = h('button', { class: 'btn primary sm', onclick: async () => {
+      go.disabled = true;
+      try {
+        const ai = await askAi();
+        if (!ai) return;
+        ctx.aiNote = ai.local ? `Designing with ${ai.choice.model} on this machine. Small local models are often weak at design; if the results look off, start from a preset.` : `Designing with ${ai.choice.model}.`;
+        status.textContent = `${ctx.aiNote} Working on the first design…`;
+        ctx.aiDesigns = await designThemes({ ask: ai.ask, brand: brand(), shape: shape(), onProgress: (ev) => { if (ev.done < ev.total) status.textContent = `${ctx.aiNote} Design ${ev.done + 1} of ${ev.total}: ${ev.direction}…`; } });
+        const ok = ctx.aiDesigns.filter((d) => !d.error);
+        ctx.aiNote = `${ok.length} of ${ctx.aiDesigns.length} designs ready. Choose one to preview it.`;
+        drawAi();
+        if (ok[0]) set(ok[0].theme, true);
+      } catch (e) { status.textContent = errText(e); } finally { go.disabled = false; }
+    } }, ctx.aiDesigns?.length ? 'Create three more' : 'Create three designs');
+    const change = h('input', { class: 'input', placeholder: 'Warmer, less rounded, a calmer header…' });
+    const ask = h('button', { class: 'btn sm', onclick: async () => {
+      if (!change.value.trim()) return;
+      ask.disabled = true;
+      try {
+        const ai = await askAi();
+        if (!ai) return;
+        status.textContent = `Changing the design with ${ai.choice.model}…`;
+        const d = await reviseTheme({ ask: ai.ask, brand: brand(), shape: shape(), theme, instruction: change.value.trim() });
+        if (d.error) { status.textContent = `That change couldn't be used: ${d.error}`; return; }
+        ctx.aiNote = d.adjusted.length ? `Changed. ${d.adjusted.length} adjustment${d.adjusted.length === 1 ? '' : 's'} made for readability.` : 'Changed.';
+        set(d.theme, true);
+      } catch (e) { status.textContent = errText(e); } finally { ask.disabled = false; }
+    } }, 'Ask for a change');
+    aiBox.replaceChildren(
+      h('h4', { class: 'docs-sub', style: { marginTop: 0 } }, 'Design with AI'),
+      h('div', { class: 'form-grid docs-design-grid' },
+        h('label', null, 'Brand colours'), swatches,
+        h('label', null, 'Audience'), audience,
+        h('label', null, 'Tone'), tones,
+        h('label', null, 'Sites you like'), likes),
+      h('div', { class: 'row', style: { gap: '6px', marginTop: '8px' } }, go),
+      status,
+      results.childElementCount ? results : null,
+      h('div', { class: 'row', style: { gap: '6px', marginTop: '6px' } }, change, ask),
+      h('p', { class: 'hint', style: { margin: '4px 0 0' } }, 'The AI sees only the site name, these brand details and the number of groups and requests, never the API itself. It chooses from the same layouts, fonts and options as the controls below, and every design is checked for readable contrast before you see it.'));
+  }
+
   describe(contrastFailures(validateTheme(ctx.result.theme || DEFAULT_THEME).theme));
   describeFonts(ctx.fonts);
   draw();
   return body;
+}
+
+/** Calls the chosen AI model for a structured answer. */
+function askWith(choice) {
+  return async (system, prompt, schema) => {
+    const answer = await bridge.aiAsk({ provider: choice.provider, model: choice.model, system, prompt, schema }, `docs-${uuid()}`, () => {});
+    return parseStructured(answer.text, schema);
+  };
 }
