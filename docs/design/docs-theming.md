@@ -40,7 +40,10 @@ A theme is a JSON document, validated against a schema in `src/js/docgen/theme.j
                "get": "#2f7a4f", "post": "#9a5b13", "put": "#2f5f9a", "patch": "#6b4fa0", "delete": "#a23a3a" },
     "dark":  { "...": "same keys" }
   },
-  "syntax": { "key": "#e6b673", "string": "#9fd39a", "number": "#f0a37a", "literal": "#c9a0f0", "punct": "#8c857a" },
+  "syntax": {
+    "light": { "key": "#e6b673", "string": "#9fd39a", "number": "#f0a37a", "literal": "#c9a0f0", "punct": "#8c857a" },
+    "dark":  { "...": "same keys" }
+  },
   "type": {
     "display": "fraunces", "body": "inter", "mono": "jetbrains-mono",
     "baseSize": 16, "scale": 1.25, "headingWeight": 600, "headingTracking": -0.01
@@ -53,6 +56,7 @@ A theme is a JSON document, validated against a schema in `src/js/docgen/theme.j
 ```
 
 - `mode`: `auto` follows the reader's setting; `light` and `dark` force one, and then only that palette is required.
+- Syntax colours are set per mode, because one set can't pass on both a light and a dark code pane.
 - Colours are hex, so contrast can be measured in code. The prompt asks the model to reason in OKLCH and to tint greys towards the brand hue.
 - `type.*` font values are IDs from the font catalogue (below). Any other value fails validation.
 - `header` sets the overview page's top: `plain`, `banded` (a full-width band in a brand colour) or `split` (the intro next to a first request and its response).
@@ -75,8 +79,8 @@ Published pages can't load anything from outside, so fonts ship with the site.
 The Documentation panel gets a **Design** step. Everything in it is optional except the site name.
 
 - **Logo:** SVG or PNG.
-  - An SVG is cleaned before use: no `<script>`, `<foreignObject>`, event attributes, or `href`s outside the file. It's then published as `assets/logo.svg`.
-  - A PNG stays inline as a `data:` URL, as `logoDataUrl` already allows. The panel exposes the logo field, which the build already supports but the panel never passes.
+  - Any image, SVG included, is drawn onto a canvas and published as a PNG `data:` URL at most 96 px tall. Nothing an SVG could run survives that, so there's no SVG cleaning to get right.
+  - The build accepts only a PNG `data:` URL for the logo.
 - **Brand colours:** taken from the logo in code, by clustering its pixels and dropping near-white and near-black. They're shown as swatches the author can edit or add to.
 - **Company website:** optional. Rust fetches the home page and its stylesheets, and code extracts brand facts:
   - `theme-color`;
@@ -122,8 +126,8 @@ Every theme goes through these checks before the author sees it.
 1. **Schema:** fields, types, catalogue fonts, allowed values.
 2. **Contrast:** WCAG 2.1, measured in code, in every palette the mode uses.
    - 4.5:1 for `text`, `muted`, `accent`, the five method colours on `bg` and `surface`, and `onAccent` on `accent`.
-   - 4.5:1 for `codeText` and every syntax colour on `codeBg`.
-   - 3:1 for `line` against `bg`, because tables rely on it.
+   - 4.5:1 for `codeText` and every syntax colour on `codeBg`, per mode.
+   - 1.2:1 for `line` against `bg`, so table rules stay visible. A higher minimum makes rules too dark.
 3. **Extra CSS:** cleaned (below).
 4. **Render check:** the site is built with the theme, the Node tests' link check runs on it, and the widest line of body text is measured at 1280 px.
 
@@ -204,12 +208,12 @@ The lock is a new boolean on `docs_sites`. Add it to `server/src/db.rs`, `worker
 
 ## Release plan
 
-1. **Themes without AI.** The theme schema and checks, the four layouts, the font catalogue, presets, direct controls, the logo field, and storage in `_dispatch/theme.json`. This alone fixes "every site looks the same".
+1. **Themes without AI.** The theme schema and checks, the four layouts, the font catalogue, presets, direct controls, the logo field, and storage in `_dispatch/theme.json`. This alone fixes "every site looks the same". Built in PR #19, with font stacks in place of web fonts.
 2. **AI designs.** Brand facts from the logo, the three directions, retry and correction, and "Ask for a change".
 3. **Website input and extra CSS.** Brand facts from a website, and cleaned extra CSS.
 
 ## Open questions
 
-- **Font delivery.** Bundling the catalogue adds roughly 2 MB to the app, against a download that's 8 MB today. The alternative is downloading a font the first time a theme uses it, from a pinned URL with a SHA-256 check, and caching it. That keeps the app small, but designing then needs a network connection. Proposal: download on first use.
+- **Font delivery.** Step 1 shipped with system font stacks: each catalogue entry is a stack for one voice, so nothing is bundled or downloaded and the CSP is unchanged, but the result varies by platform. For real web fonts, bundling the catalogue adds roughly 2 MB to the app, against a download that's 8 MB today. The alternative is downloading a font the first time a theme uses it, from a pinned URL with a SHA-256 check, and caching it. That keeps the app small, but designing then needs a network connection. Proposal: download on first use.
 - **Images as input.** Models that accept images could look at the logo or a screenshot of the brand site directly. Extracted colours work with every provider, so they come first; image input could follow for providers that support it.
 - **Custom fonts.** Teams with their own licensed font would need to upload it, and confirm they're allowed to publish it on the web. Left out of this spec.
