@@ -17,11 +17,15 @@ import { brandFacts, stylesheetLinks } from '../docgen/brandsite.js';
 import { zip, toBase64 } from '../docgen/zip.js';
 import { loadFonts } from './fontcache.js';
 import { TONES, designThemes, reviseTheme, siteShape, paletteFromPixels } from '../docgen/design.js';
+import { setDocJob } from './sidebar.js';
 
 const api = (method, path, body) => bridge.postman(method, path, body);
 const enc = encodeURIComponent;
 const STATUS = { none: ['No domain', 'chip'], pending: ['Not verified yet', 'chip warn'], verified: ['Verified', 'chip ok'], failed: ['Verification failed', 'chip bad'] };
 const rank = { viewer: 0, editor: 1, creator: 2, admin: 3 };
+
+/** In-flight documentation generation jobs keyed by collectionUid */
+const activeJobs = new Map();
 
 /** Remembered per site on this device: generation options and review edits. */
 function prefs(siteId) {
@@ -49,8 +53,40 @@ async function knownSecrets(entry) {
 export async function openDocsSite(entry) {
   await S.ensureCollection(entry);
   const body = h('div', { class: 'docsite' }, h('div', { class: 'loading-bar' }));
-  const close = modal({ title: `Documentation · ${entry.name}`, wide: true, body });
+  const close = modal({
+    title: `Documentation · ${entry.name}`,
+    wide: true,
+    body,
+    onClose: () => {
+      const job = activeJobs.get(entry.uid);
+      if (job && job.ctx === ctx) {
+        job.ctx = null;
+      }
+    },
+  });
   const ctx = { entry, body, close, role: 'viewer', site: null, versions: [] };
+
+  const existing = activeJobs.get(entry.uid);
+  if (existing) {
+    if (existing.status === 'running') {
+      ctx.site = existing.site;
+      ctx.role = existing.role || 'editor';
+      ctx.versions = existing.versions || [];
+      existing.ctx = ctx;
+      attachRunningJobView(ctx, existing);
+      return;
+    }
+    if (existing.status === 'done' && existing.result) {
+      ctx.site = existing.site;
+      ctx.role = existing.role || 'editor';
+      ctx.versions = existing.versions || [];
+      activeJobs.delete(entry.uid);
+      renderReview(ctx, existing.result);
+      return;
+    }
+    activeJobs.delete(entry.uid);
+  }
+
   try {
     const [me, list] = await Promise.all([api('GET', '/me'), api('GET', `/docs-sites?collection=${enc(entry.uid)}`)]);
     ctx.role = me?.user?.role || 'editor';
@@ -61,6 +97,32 @@ export async function openDocsSite(entry) {
     return;
   }
   renderSite(ctx);
+}
+
+function attachRunningJobView(ctx, job) {
+  const lines = h('ol', { class: 'docs-progress' });
+  for (const s of job.steps) {
+    lines.append(h('li', null, s));
+  }
+  let writingLi = null;
+  if (job.currentWriting) {
+    writingLi = h('li', null, job.currentWriting);
+    lines.append(writingLi);
+  }
+  ctx.lines = lines;
+  ctx.writingLi = writingLi;
+
+  const bgBtn = h('button', {
+    class: 'btn primary sm',
+    title: 'Keep generating in the background and close this dialog',
+    onclick: () => ctx.close(),
+  }, 'Run in background');
+
+  ctx.body.replaceChildren(
+    h('div', { class: 'loading-bar' }),
+    lines,
+    h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px', marginTop: '12px' } }, bgBtn)
+  );
 }
 
 const isAdmin = (ctx) => ctx.role === 'admin';
@@ -211,30 +273,98 @@ async function runGeneration(ctx) {
   const { site, entry } = ctx;
   const p = prefs(site.id);
   const lines = h('ol', { class: 'docs-progress' });
-  const step = (text) => { const li = h('li', null, text); lines.append(li); return li; };
-  const back = h('button', { class: 'btn', onclick: () => renderSite(ctx) }, 'Back');
-  ctx.body.replaceChildren(h('div', { class: 'loading-bar' }), lines, h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, back));
+  ctx.lines = lines;
+  ctx.writingLi = null;
+
+  const job = {
+    entry,
+    site,
+    role: ctx.role,
+    versions: ctx.versions,
+    startedAt: Date.now(),
+    status: 'running',
+    currentStep: 'Preparing generation…',
+    currentWriting: '',
+    done: 0,
+    total: 0,
+    steps: [],
+    result: null,
+    error: null,
+    ctx,
+  };
+  activeJobs.set(entry.uid, job);
+  setDocJob(job);
+
+  const step = (text) => {
+    job.steps.push(text);
+    job.currentStep = text;
+    setDocJob(job);
+    if (job.ctx?.lines && job.ctx.body?.isConnected) {
+      const li = h('li', null, text);
+      job.ctx.lines.append(li);
+      return li;
+    }
+    return null;
+  };
+
+  const back = h('button', { class: 'btn', onclick: () => { activeJobs.delete(entry.uid); setDocJob(null); renderSite(ctx); } }, 'Back');
+  const bgBtn = h('button', {
+    class: 'btn primary sm',
+    title: 'Keep generating in the background and close this dialog',
+    onclick: () => ctx.close(),
+  }, 'Run in background');
+
+  ctx.body.replaceChildren(
+    h('div', { class: 'loading-bar' }),
+    lines,
+    h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px', marginTop: '12px' } }, bgBtn, back)
+  );
+
   try {
     let ask = null;
     if (p.useAi !== false) {
       const { ready } = await import('./assistview.js');
       const choice = await ready({ purpose: 'docs' });
-      if (!choice) { renderSite(ctx); return; }
+      if (!choice) {
+        activeJobs.delete(entry.uid);
+        setDocJob(null);
+        if (ctx.body.isConnected) renderSite(ctx);
+        return;
+      }
       step(`Writing with ${choice.model}`);
       ask = askWith(choice);
     }
     let verified = {};
-    if (p.verifyEnv) { const li = step('Running requests to verify examples…'); verified = await verifyRun(ctx); li.textContent = `Ran ${Object.keys(verified).length} requests: ${Object.values(verified).filter((v) => v.ok).length} passed`; }
+    if (p.verifyEnv) {
+      const li = step('Running requests to verify examples…');
+      verified = await verifyRun(ctx);
+      const ranText = `Ran ${Object.keys(verified).length} requests: ${Object.values(verified).filter((v) => v.ok).length} passed`;
+      if (li) li.textContent = ranText;
+      job.currentStep = ranText;
+      setDocJob(job);
+    }
     let previous = null;
     if (site.current_version) {
-      try { previous = { structure: await api('GET', `/docs-sites/${enc(site.id)}/versions/${site.current_version}/files/_dispatch/structure.json`), history: ctx.versions }; } catch { previous = { structure: null, history: ctx.versions }; }
+      try {
+        previous = {
+          structure: await api('GET', `/docs-sites/${enc(site.id)}/versions/${site.current_version}/files/_dispatch/structure.json`),
+          history: ctx.versions,
+        };
+      } catch {
+        previous = { structure: null, history: ctx.versions };
+      }
     }
     const theme = await siteTheme(ctx, p);
-    const fontStep = step('Getting the design\'s fonts');
+    const fontStep = step("Getting the design's fonts");
     ctx.fonts = await loadFonts(theme);
-    fontStep.textContent = ctx.fonts.missing.length ? `Couldn't download ${ctx.fonts.missing.map((m) => m.name).join(', ')}; using system fonts instead` : 'Fonts ready';
+    const fontText = ctx.fonts.missing.length
+      ? `Couldn't download ${ctx.fonts.missing.map((m) => m.name).join(', ')}; using system fonts instead`
+      : 'Fonts ready';
+    if (fontStep) fontStep.textContent = fontText;
+    job.currentStep = fontText;
+    setDocJob(job);
+
     const known = await knownSecrets(entry);
-    let writing = null;
     const result = await generateDocs({
       collection: entry.data,
       collectionUid: entry.uid,
@@ -255,13 +385,53 @@ async function runGeneration(ctx) {
       onProgress: (ev) => {
         if (ev.step === 'gather') step('Gathering requests, examples and history; replacing secrets');
         else if (ev.step === 'facts') step('Working out fields, errors and call order');
-        else if (ev.step === 'write') { writing = writing || step(''); writing.textContent = ev.done < ev.total ? `Writing ${ev.job || ''} (${ev.done + 1} of ${ev.total})` : `Wrote ${ev.total} page${ev.total === 1 ? '' : 's'}`; }
+        else if (ev.step === 'write') {
+          job.done = ev.done;
+          job.total = ev.total;
+          const text = ev.done < ev.total ? `Writing ${ev.job || ''} (${ev.done + 1} of ${ev.total})` : `Wrote ${ev.total} page${ev.total === 1 ? '' : 's'}`;
+          job.currentStep = text;
+          job.currentWriting = text;
+          setDocJob(job);
+          if (job.ctx?.writingLi) {
+            job.ctx.writingLi.textContent = text;
+          } else if (job.ctx?.lines && job.ctx.body?.isConnected) {
+            job.ctx.writingLi = h('li', null, text);
+            job.ctx.lines.append(job.ctx.writingLi);
+          }
+        }
         else if (ev.step === 'build') step('Building pages');
       },
     });
-    renderReview(ctx, result);
+
+    job.status = 'done';
+    job.result = result;
+    setDocJob(null);
+
+    if (job.ctx && job.ctx.body && job.ctx.body.isConnected) {
+      activeJobs.delete(entry.uid);
+      renderReview(job.ctx, result);
+    } else {
+      toast(`Documentation for "${site.name}" is ready for review`, {
+        timeout: 12000,
+        action: {
+          label: 'Review & Publish',
+          onClick: () => openDocsSite(entry),
+        },
+      });
+    }
   } catch (e) {
-    ctx.body.replaceChildren(h('div', { class: 'note err' }, icon('alert'), h('span', null, errText(e))), h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '12px' } }, back));
+    job.status = 'error';
+    job.error = e;
+    setDocJob(null);
+    if (job.ctx && job.ctx.body && job.ctx.body.isConnected) {
+      activeJobs.delete(entry.uid);
+      job.ctx.body.replaceChildren(
+        h('div', { class: 'note err' }, icon('alert'), h('span', null, errText(e))),
+        h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '12px' } }, back)
+      );
+    } else {
+      toast(`Documentation generation failed: ${errText(e)}`, { error: true });
+    }
   }
 }
 
@@ -341,8 +511,16 @@ function renderReview(ctx, result, view = {}) {
 
   const blockers = [];
   if (result.secretHits.length) blockers.push(`${result.secretHits.length} possible secret${result.secretHits.length === 1 ? '' : 's'} found`);
-  if (result.gaps.length) blockers.push(`${result.gaps.length} gap${result.gaps.length === 1 ? '' : 's'} to resolve`);
+  const hasGaps = result.gaps.length > 0;
   const publish = h('button', { class: 'btn primary', disabled: blockers.length > 0, onclick: async (e) => {
+    if (hasGaps) {
+      const proceed = await confirmDialog({
+        title: `Publish with ${result.gaps.length} unresolved gap${result.gaps.length === 1 ? '' : 's'}?`,
+        message: 'Rows without descriptions will be published as they are, without descriptions.',
+        confirm: 'Publish anyway',
+      });
+      if (!proceed) return;
+    }
     e.target.disabled = true; e.target.textContent = 'Publishing…';
     try {
       const out = await api('POST', `/docs-sites/${enc(site.id)}/versions`, { files: ctx.result.files, changelog: ctx.result.changelog.join('\n') });
@@ -368,7 +546,7 @@ function renderReview(ctx, result, view = {}) {
     result.secretHits.length ? h('div', { class: 'note err' }, icon('alert'), h('div', null, h('p', { style: { margin: 0 } }, 'These look like real credentials. Remove them from the collection\'s examples (or turn off history), then generate again.'), h('ul', null, hitRows))) : null,
     h('div', { class: 'docs-review' }, h('div', null, h('div', { class: 'docs-preview-head' }, list, toolbar), wrap), h('div', null, tabBar, tabBody)),
     h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px', marginTop: '12px' } },
-      blockers.length ? h('span', { class: 'faint', style: { marginRight: 'auto' } }, `Can't publish yet: ${blockers.join(', ')}.`) : null,
+      blockers.length ? h('span', { class: 'faint', style: { marginRight: 'auto' } }, `Can't publish: ${blockers.join(', ')}.`) : hasGaps ? h('span', { class: 'faint', style: { marginRight: 'auto' } }, `${result.gaps.length} row${result.gaps.length === 1 ? '' : 's'} without descriptions.`) : null,
       h('button', { class: 'btn ghost', onclick: () => renderSite(ctx) }, 'Back'), download, publish)].filter(Boolean));
   show(current);
 }

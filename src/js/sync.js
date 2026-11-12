@@ -87,3 +87,15 @@ export async function getGlobals(wsId) {
 export async function putGlobals(wsId, values) {
   return note(await api('PUT', `/workspaces/${q(wsId)}/global-variables`, { values: cleanValues(values) }));
 }
+
+export async function deleteCollection(uid) {
+  return note(await api('DELETE', `/collections/${q(uid)}`));
+}
+
+export async function deleteEnvironment(uid) {
+  return note(await api('DELETE', `/environments/${q(uid)}`));
+}
+
+export async function getMe() {
+  return note(await api('GET', '/me'));
+}

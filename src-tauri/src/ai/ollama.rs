@@ -87,6 +87,9 @@ pub fn request_body(ask: &Ask) -> Value {
     let mut body = json!({
         "model": ask.model,
         "stream": true,
+        "options": {
+            "num_predict": 8192,
+        },
         "messages": [{ "role": "system", "content": ask.system }, { "role": "user", "content": ask.prompt }],
     });
     if let Some(schema) = &ask.schema {

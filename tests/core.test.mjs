@@ -1339,6 +1339,11 @@ test('checkSchema finds what a structured answer gets wrong', () => {
 test('parseStructured accepts fenced JSON and explains failures', () => {
   const schema = { type: 'object', properties: { a: { type: 'string' } }, required: ['a'], additionalProperties: false };
   assert.deepEqual(parseStructured('```json\n{"a":"x"}\n```', schema), { a: 'x' });
+  assert.deepEqual(parseStructured('<think>reasoning...</think>\n```json\n{"a":"x"}\n```', schema), { a: 'x' });
+  assert.deepEqual(parseStructured('Here is the result:\n```json\n{"a":"x"}\n```\nHope it helps!', schema), { a: 'x' });
+  assert.deepEqual(parseStructured('{"a":"x",}', schema), { a: 'x' });
+  const itemsSchema = { type: 'object', properties: { items: { type: 'array' } }, required: ['items'] };
+  assert.deepEqual(parseStructured('[{"target":"t1"}]', itemsSchema), { items: [{ target: 't1' }] });
   assert.throws(() => parseStructured('Sure! Here it is', schema), /wasn't valid JSON/);
   assert.throws(() => parseStructured('{"b":1}', schema), /\$\.a is missing/);
   assert.match(retryPrompt('Make a request', 'The answer wasn\'t valid JSON.'), /^Make a request\n\nYour previous answer couldn't be used: The answer wasn't valid JSON\. Reply again/);

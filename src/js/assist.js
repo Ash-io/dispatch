@@ -132,11 +132,51 @@ export function checkSchema(value, schema, path = '$') {
   return errs;
 }
 
-/** Parses a structured answer (tolerating a ```json fence) and checks it; throws with the problems. */
+/** Parses a structured answer (tolerating thinking tags, prose, markdown fences, and trailing commas) and checks it; throws with the problems. */
 export function parseStructured(text, schema) {
   let value;
-  const body = String(text || '').trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1');
-  try { value = JSON.parse(body); } catch { throw new Error('The answer wasn\'t valid JSON.'); }
+  let body = String(text || '').trim();
+
+  // Strip reasoning blocks (<think>...</think>, <thought>...</thought>) common in Kimi, DeepSeek, QwQ, etc.
+  body = body.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
+  body = body.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
+
+  // Try parsing from markdown fenced code block if present anywhere in the text
+  const fence = /```(?:json)?\s*\n?([\s\S]*?)\n?```/i.exec(body);
+  if (fence) {
+    body = fence[1].trim();
+  } else {
+    // If not fenced, extract the outermost JSON object or array
+    const startObj = body.indexOf('{');
+    const startArr = body.indexOf('[');
+    let start = -1;
+    let end = -1;
+    if (startObj !== -1 && (startArr === -1 || startObj < startArr)) {
+      start = startObj;
+      end = body.lastIndexOf('}');
+    } else if (startArr !== -1) {
+      start = startArr;
+      end = body.lastIndexOf(']');
+    }
+    if (start !== -1 && end !== -1 && end > start) {
+      body = body.slice(start, end + 1);
+    }
+  }
+
+  // Remove trailing commas before closing braces/brackets
+  const sanitized = body.replace(/,\s*([}\]])/g, '$1');
+
+  try {
+    value = JSON.parse(sanitized);
+  } catch {
+    throw new Error('The answer wasn\'t valid JSON.');
+  }
+
+  // Normalize if model returned an array directly when { items: [...] } was expected
+  if (Array.isArray(value) && schema?.type === 'object' && schema?.properties?.items) {
+    value = { items: value };
+  }
+
   const errs = checkSchema(value, schema);
   if (errs.length) throw new Error(`The answer didn't match the expected shape: ${errs.slice(0, 5).join('; ')}`);
   return value;

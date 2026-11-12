@@ -6,6 +6,8 @@ src-tauri/gen/
 .wrangler/
 
 # Local marketing and video assets, not part of the app
+.release/
+.release-notes-*.md
 .agents/
 skills-lock.json
 launch-video/

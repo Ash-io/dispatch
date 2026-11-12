@@ -217,6 +217,9 @@ button.ws-select.menu-open { background-color: var(--hover); }
 .sync-dot.off { background: var(--text-3); }
 .sync-dot.err { background: var(--err); }
 .sync-dot.busy { background: var(--warn); }
+.side-task { border-top: 1px solid var(--border); padding: 6px 10px; display: flex; align-items: center; gap: 7px; font-size: 11px; background: var(--panel); color: var(--text-2); cursor: pointer; min-width: 0; }
+.side-task:hover { background: var(--hover); color: var(--text); }
+.side-task .badge { font-size: 10px; padding: 1px 5px; }
 
 .tree-row {
   display: flex; align-items: center; gap: 5px; height: 27px; padding: 0 4px 0 calc(4px + var(--depth, 0) * 14px);

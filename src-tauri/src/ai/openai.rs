@@ -73,6 +73,7 @@ pub fn request_body(ask: &Ask, structured: bool) -> Value {
         "model": ask.model,
         "stream": true,
         "stream_options": { "include_usage": true },
+        "max_tokens": 8192,
     });
     if let Some(schema) = &ask.schema {
         if structured {
