@@ -13,8 +13,9 @@
 <!-- Login view -->
 <main id="view-login" class="login-wrap">
   <section class="card login-card">
-    <h1 class="brand"><img src="./favicon.svg" alt="">Dispatch <span class="brand-sub">Admin</span></h1>
-    <p class="muted login-sub" id="login-sub">Sign in to manage Postman accounts, people and access.</p>
+    <div class="brand login-brand"><img src="./favicon.svg" alt="">Dispatch <span class="brand-sub">Admin</span></div>
+    <h1 class="login-title" id="login-title">Sign in</h1>
+    <p class="muted login-sub" id="login-sub">Manage Postman accounts, users and who can reach which workspace.</p>
     <form id="login-form" data-mode="credentials" novalidate>
       <div class="field cred-only">
         <label for="login-email">Email</label>
@@ -27,6 +28,7 @@
       <p class="form-error" id="login-error" role="alert" hidden></p>
       <button class="btn primary block" id="login-submit" type="submit">Sign in</button>
     </form>
+    <p class="login-host muted" id="login-host"></p>
     <p class="mode-switch">
       <button class="link" id="register-toggle" type="button">New server? Create the first account</button>
       <button class="link" id="mode-toggle" type="button">Use server admin password instead</button>
@@ -58,13 +60,17 @@
     <!-- Postman accounts -->
     <section id="tab-accounts" class="panel" hidden>
       <div class="panel-head">
-        <h2>Postman accounts</h2>
+        <div class="panel-title">
+          <h2>Postman accounts</h2>
+          <p class="panel-desc">Postman API keys this server uses. Their workspaces become available to the users you grant them to.</p>
+        </div>
         <div class="panel-tools">
           <button class="icon-btn" id="accounts-refresh" type="button" title="Check again" aria-label="Check accounts again"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.500 8a5.500 5.500 0 1 1-1.600-3.900"/><path d="M13.500 2v3h-3"/></svg></button>
           <button class="btn primary" id="account-add" type="button">Add account</button>
         </div>
       </div>
-      <div class="notice bad" id="secret-notice" hidden>
+      <div class="notice bad" id="secret-notice" role="alert" hidden>
+        <svg class="ico notice-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2 14.2 13H1.8z"/><path d="M8 6.5v3M8 11.2v.01"/></svg>
         <p><b>This server can't store keys yet.</b> Set a <code>SECRET_KEY</code> secret of at least 32 random characters (<code>openssl rand -hex 32</code>), then come back.</p>
       </div>
       <div class="onboard" id="accounts-empty" hidden>
@@ -92,21 +98,23 @@
           <tbody id="accounts-body"></tbody>
         </table>
       </div>
-      <p class="table-foot muted" id="accounts-foot" hidden>Keys are encrypted on this server and never shown again. In Postman, changes made through a key appear as that key's owner; the audit log here records who really made them.</p>
+      <p class="table-foot muted" id="accounts-foot" hidden>Keys are encrypted on this server and never shown again. In Postman, changes made through a key appear as made by that key's owner; the audit log here records who actually made them.</p>
     </section>
 
     <!-- Workspaces -->
     <section id="tab-workspaces" class="panel" hidden>
       <div class="panel-head">
-        <h2>Workspaces</h2>
+        <div class="panel-title">
+          <h2>Workspaces</h2>
+          <p class="panel-desc">Everything users can work in: workspaces from connected Postman accounts, and ones stored on this server.</p>
+        </div>
         <div class="panel-tools">
           <label class="search"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.500"/><path d="M10.500 10.500 14 14"/></svg><span class="visually-hidden">Search workspaces</span><input id="workspaces-search" type="search" placeholder="Search workspaces" spellcheck="false"></label>
           <button class="icon-btn" id="workspaces-refresh" type="button" title="Refresh" aria-label="Refresh workspaces"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.500 8a5.500 5.500 0 1 1-1.600-3.900"/><path d="M13.500 2v3h-3"/></svg></button>
           <button class="btn primary" id="workspace-new" type="button">New workspace</button>
         </div>
       </div>
-      <div class="notice warn" id="workspaces-failed" hidden><p id="workspaces-failed-text"></p></div>
-      <p class="panel-intro muted">Workspaces come from connected Postman accounts, or are stored on this server. Ones stored here need no Postman account, and only people using Dispatch can reach them.</p>
+      <div class="notice warn" id="workspaces-failed" hidden><svg class="ico notice-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2 14.2 13H1.8z"/><path d="M8 6.5v3M8 11.2v.01"/></svg><p id="workspaces-failed-text"></p></div>
       <div class="tablewrap">
         <table class="data-table">
           <thead>
@@ -125,7 +133,10 @@
     <!-- Users -->
     <section id="tab-users" class="panel">
       <div class="panel-head">
-        <h2>Users</h2>
+        <div class="panel-title">
+          <h2>Users</h2>
+          <p class="panel-desc">People who can sign in to this server, their role, and the workspaces they can reach.</p>
+        </div>
         <div class="panel-tools">
           <label class="search"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.500"/><path d="M10.500 10.500 14 14"/></svg><span class="visually-hidden">Search users</span><input id="users-search" type="search" placeholder="Search by email" spellcheck="false"></label>
           <button class="icon-btn" id="users-refresh" type="button" title="Refresh" aria-label="Refresh users"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.500 8a5.500 5.500 0 1 1-1.600-3.900"/><path d="M13.500 2v3h-3"/></svg></button>
@@ -134,10 +145,12 @@
       </div>
 
       <div class="notice warn" id="reg-notice" hidden>
+        <svg class="ico notice-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2 14.2 13H1.8z"/><path d="M8 6.5v3M8 11.2v.01"/></svg>
         <p><b>Registration is open.</b> Anyone who can reach this server can create an account. They see nothing until you give them a workspace.</p>
         <button class="btn sm" id="reg-close" type="button">Turn off</button>
       </div>
-      <div class="notice bad" id="key-notice" hidden>
+      <div class="notice info" id="key-notice" hidden>
+        <svg class="ico notice-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 7.2v3.6M8 5.2v.01"/></svg>
         <p><b>No workspaces yet.</b> People can sign in but have nothing to work in. Connect a Postman account, or create a workspace on this server.</p>
         <button class="btn sm" id="key-notice-go" type="button">Add a workspace</button>
       </div>
@@ -184,6 +197,7 @@
         </table>
       </div>
 
+      <h3 class="role-key-title">What each role can do</h3>
       <dl class="role-key">
         <div><dt>Viewer</dt><dd>Read only, with private variable values hidden</dd></div>
         <div><dt>Editor</dt><dd>Edit collections and environments</dd></div>
@@ -195,12 +209,14 @@
     <!-- Documentation -->
     <section id="tab-docs" class="panel" hidden>
       <div class="panel-head">
-        <h2>Documentation</h2>
+        <div class="panel-title">
+          <h2>Documentation</h2>
+          <p class="panel-desc">Public sites published from the Dispatch app. Each one is served only on its own verified domain.</p>
+        </div>
         <div class="panel-tools">
           <button class="icon-btn" id="docs-refresh" type="button" title="Refresh" aria-label="Refresh documentation sites"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.500 8a5.500 5.500 0 1 1-1.600-3.900"/><path d="M13.500 2v3h-3"/></svg></button>
         </div>
       </div>
-      <p class="panel-intro muted">Sites are created and published from the Dispatch app (a collection's menu, then Documentation). Each site is served only on its own verified domain, never on this server's address. Point the domain at this server and set up HTTPS for it, or add the TXT record shown, then verify.</p>
       <div class="tablewrap">
         <table class="data-table">
           <thead>
@@ -214,13 +230,18 @@
           <tbody id="docs-body"></tbody>
         </table>
       </div>
+      <p class="table-foot muted" id="docs-foot" hidden>To verify a domain, point it at this server and set up HTTPS for it, or add the TXT record shown, then press Verify. A site goes live once its domain is verified and it has a published version.</p>
     </section>
 
     <!-- Settings -->
     <section id="tab-settings" class="panel" hidden>
       <div class="panel-head">
-        <h2>Settings</h2>
+        <div class="panel-title">
+          <h2>Settings</h2>
+          <p class="panel-desc">How people join this server.</p>
+        </div>
       </div>
+      <h3 class="section-title">Registration</h3>
       <div class="card setting-card">
         <label class="switch" for="allow-registration">
           <input type="checkbox" id="allow-registration">
@@ -235,7 +256,10 @@
     <!-- Audit log -->
     <section id="tab-audit" class="panel" hidden>
       <div class="panel-head">
-        <h2>Audit log</h2>
+        <div class="panel-title">
+          <h2>Audit log</h2>
+          <p class="panel-desc">Every call made through this server and every change to accounts, users and access.</p>
+        </div>
         <div class="panel-tools">
           <label class="search"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.500"/><path d="M10.500 10.500 14 14"/></svg><span class="visually-hidden">Filter the audit log</span><input id="audit-search" type="search" placeholder="Filter by user or request" spellcheck="false"></label>
           <label class="visually-hidden" for="audit-status">Status</label>

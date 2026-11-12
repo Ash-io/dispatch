@@ -18,6 +18,8 @@
     loginError: $("login-error"),
     loginSubmit: $("login-submit"),
     loginSub: $("login-sub"),
+    loginTitle: $("login-title"),
+    loginHost: $("login-host"),
     modeToggle: $("mode-toggle"),
     registerToggle: $("register-toggle"),
     logoutBtn: $("logout-btn"),
@@ -27,6 +29,7 @@
     panels: { accounts: $("tab-accounts"), workspaces: $("tab-workspaces"), users: $("tab-users"), docs: $("tab-docs"), settings: $("tab-settings"), audit: $("tab-audit") },
     docsBody: $("docs-body"),
     docsCount: $("docs-count"),
+    docsFoot: $("docs-foot"),
     docsRefresh: $("docs-refresh"),
     accountsCount: $("accounts-count"),
     accountsBody: $("accounts-body"),
@@ -78,6 +81,7 @@
   };
 
   let me = null;
+  els.loginHost.textContent = "Server: " + location.host;
   let loginMode = "credentials";
   let toastTimer = null;
   let allUsers = [];
@@ -146,11 +150,30 @@
     return cell;
   }
 
-  function statusRow(body, colSpan, text) {
+  // A table's empty, no-match or error state, in place of its rows. `opts`:
+  // title, actions [{ label, onClick, primary }], retry (a loader, for errors).
+  function statusRow(body, colSpan, text, opts) {
+    const o = opts || {};
     body.textContent = "";
-    const row = el("tr");
-    const cell = el("td", "empty-cell", text);
+    const row = el("tr", "status-row");
+    const cell = el("td", "empty-cell" + (o.retry ? " is-error" : ""));
     cell.colSpan = colSpan;
+    const box = el("div", "empty");
+    if (o.title) box.appendChild(el("strong", "empty-title", o.title));
+    box.appendChild(el("p", "empty-text", text));
+    const actions = (o.actions || []).slice();
+    if (o.retry) actions.push({ label: "Try again", onClick: o.retry });
+    if (actions.length) {
+      const bar = el("div", "empty-actions");
+      for (const a of actions) {
+        const b = el("button", "btn" + (a.primary ? " primary" : ""), a.label);
+        b.type = "button";
+        b.addEventListener("click", a.onClick);
+        bar.appendChild(b);
+      }
+      box.appendChild(bar);
+    }
+    cell.appendChild(box);
     row.appendChild(cell);
     body.appendChild(row);
   }
@@ -160,7 +183,7 @@
     body.textContent = "";
     for (let i = 0; i < 3; i += 1) {
       const row = el("tr", "skeleton");
-      const cell = el("td");
+      const cell = el("td", "sk-" + (i + 1));
       cell.colSpan = colSpan;
       cell.appendChild(el("span", "skeleton-bar"));
       row.appendChild(cell);
@@ -409,10 +432,11 @@
   function setLoginMode(mode) {
     loginMode = mode;
     const copy = {
-      credentials: ["Sign in to manage users and review activity.", "Password", "Sign in", "current-password"],
-      register: ["The first account on a new server becomes its admin. Create yours before anyone else can.", "Password", "Create account", "new-password"],
-      admin: ["Sign in with the password set in ADMIN_PASSWORD.", "Admin password", "Sign in", "current-password"],
+      credentials: ["Manage Postman accounts, users and who can reach which workspace.", "Password", "Sign in", "current-password", "Sign in"],
+      register: ["The first account on a new server becomes its admin. Create yours before anyone else can.", "Password", "Create account", "new-password", "Create the admin account"],
+      admin: ["Use the password set in ADMIN_PASSWORD on this server.", "Admin password", "Sign in", "current-password", "Sign in with the admin password"],
     }[mode];
+    els.loginTitle.textContent = copy[4];
     els.loginForm.dataset.mode = mode === "admin" ? "admin" : "credentials";
     els.loginSub.textContent = copy[0];
     els.loginPasswordLabel.textContent = copy[1];
@@ -452,7 +476,7 @@
     if (!accounts) skeletonRows(els.accountsBody, 6);
     const result = await api("/admin/postman-accounts");
     if (!result.ok) {
-      if (result.status !== 401) { statusRow(els.accountsBody, 6, "Couldn't load Postman accounts."); fail(result); }
+      if (result.status !== 401) { statusRow(els.accountsBody, 6, "Couldn't load Postman accounts.", { retry: () => loadAccounts() }); fail(result); }
       return;
     }
     accounts = result.data.accounts;
@@ -663,7 +687,7 @@
     if (!workspaces) skeletonRows(els.workspacesBody, 4);
     const result = await api("/admin/workspaces");
     if (!result.ok || !result.data || !Array.isArray(result.data.workspaces)) {
-      if (result.status !== 401) statusRow(els.workspacesBody, 4, "Couldn't load workspaces.");
+      if (result.status !== 401) statusRow(els.workspacesBody, 4, "Couldn't load workspaces.", { retry: () => loadWorkspaces() });
       workspaces = null;
       return;
     }
@@ -692,9 +716,9 @@
     const query = els.workspacesSearch.value.trim().toLowerCase();
     const shown = workspaces.filter((w) => !query || w.name.toLowerCase().includes(query));
     if (!shown.length) {
-      statusRow(els.workspacesBody, 4, query ? "No workspaces match that search."
-        : accounts && accounts.length ? "These Postman accounts have no workspaces yet. You can also create one on this server."
-          : "No workspaces yet. Create one on this server, or connect a Postman account to see its workspaces.");
+      if (query) statusRow(els.workspacesBody, 4, "No workspaces match \u201c" + els.workspacesSearch.value.trim() + "\u201d.");
+      else if (accounts && accounts.length) statusRow(els.workspacesBody, 4, "The connected Postman accounts don't have any workspaces yet. You can also create one stored on this server.", { title: "No workspaces in these accounts", actions: [{ label: "New workspace", primary: true, onClick: () => els.workspaceNew.click() }] });
+      else statusRow(els.workspacesBody, 4, "Create one stored on this server, or connect a Postman account to bring in its workspaces.", { title: "No workspaces yet", actions: [{ label: "New workspace", primary: true, onClick: () => els.workspaceNew.click() }, { label: "Connect Postman", onClick: () => switchTab("accounts") }] });
       return;
     }
     for (const workspace of shown) {
@@ -899,7 +923,7 @@
     skeletonRows(els.usersBody, 5);
     const result = await api("/admin/users");
     if (!result.ok) {
-      if (result.status !== 401) { statusRow(els.usersBody, 5, "Couldn't load users."); fail(result); }
+      if (result.status !== 401) { statusRow(els.usersBody, 5, "Couldn't load users.", { retry: () => loadUsers() }); fail(result); }
       return;
     }
     if (!Array.isArray(result.data)) { toastErr("Unexpected response from GET /admin/users."); return; }
@@ -914,7 +938,8 @@
     const query = els.usersSearch.value.trim().toLowerCase();
     const users = allUsers.filter((u) => !query || String(u.email || "").toLowerCase().includes(query));
     if (!users.length) {
-      statusRow(els.usersBody, 5, query ? "No users match that search." : "No users yet. Add the first one with Add user.");
+      if (query) statusRow(els.usersBody, 5, "No users match \u201c" + els.usersSearch.value.trim() + "\u201d.");
+      else statusRow(els.usersBody, 5, "Add people here, or let them register while registration is open.", { title: "No users yet", actions: [{ label: "Add user", primary: true, onClick: () => els.addOpen.click() }] });
       return;
     }
     for (const user of users) els.usersBody.appendChild(userRow(user));
@@ -1166,7 +1191,7 @@
     skeletonRows(els.docsBody, 4);
     const result = await api("/docs-sites");
     if (!result.ok) {
-      if (result.status !== 401) { statusRow(els.docsBody, 4, "Couldn't load documentation sites."); fail(result); }
+      if (result.status !== 401) { statusRow(els.docsBody, 4, "Couldn't load documentation sites.", { retry: () => loadDocs() }); fail(result); }
       return;
     }
     renderDocs((result.data && result.data.sites) || []);
@@ -1175,8 +1200,9 @@
   function renderDocs(sites) {
     els.docsBody.textContent = "";
     els.docsCount.textContent = sites.length ? String(sites.length) : "";
+    els.docsFoot.hidden = !sites.length;
     if (!sites.length) {
-      statusRow(els.docsBody, 4, "No documentation sites yet. Create one from a collection in the Dispatch app.");
+      statusRow(els.docsBody, 4, "Sites are created in the Dispatch app: open a collection's menu and choose Documentation. They appear here so you can give each one a domain and put it online.", { title: "No documentation sites yet" });
       return;
     }
     for (const site of sites) {
@@ -1311,7 +1337,7 @@
     skeletonRows(els.auditBody, 5);
     const result = await api("/admin/audit?limit=" + AUDIT_LIMIT);
     if (!result.ok) {
-      if (result.status !== 401) { statusRow(els.auditBody, 5, "Couldn't load the audit log."); fail(result); }
+      if (result.status !== 401) { statusRow(els.auditBody, 5, "Couldn't load the audit log.", { retry: () => loadAudit() }); fail(result); }
       return;
     }
     if (!Array.isArray(result.data)) { toastErr("Unexpected response from GET /admin/audit."); return; }
@@ -1335,7 +1361,8 @@
     });
     els.auditFoot.textContent = allAudit.length >= AUDIT_LIMIT ? "Showing the latest " + AUDIT_LIMIT + " entries." : "";
     if (!entries.length) {
-      statusRow(els.auditBody, 5, allAudit.length ? "Nothing matches that filter." : "No activity yet. Requests made through this server appear here.");
+      if (allAudit.length) statusRow(els.auditBody, 5, "Nothing matches that filter.");
+      else statusRow(els.auditBody, 5, "Requests made through this server, and changes to accounts, users and access, are recorded here.", { title: "No activity yet" });
       return;
     }
     for (const entry of entries) {
