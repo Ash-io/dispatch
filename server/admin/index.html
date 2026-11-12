@@ -42,6 +42,7 @@
       <button class="tab" data-tab="accounts" type="button"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.500" cy="10.500" r="3"/><path d="M7.700 8.300 13.500 2.500M11 5l2 2M9.500 6.500l1.500 1.500"/></svg>Postman accounts<span class="tab-count" id="accounts-count"></span></button>
       <button class="tab" data-tab="workspaces" type="button"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="4" rx="1"/><rect x="2" y="9" width="12" height="4" rx="1"/></svg>Workspaces<span class="tab-count" id="workspaces-count"></span></button>
       <button class="tab active" data-tab="users" type="button"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="5.5" r="2.5"/><path d="M1.5 13.5c.4-2.6 2.2-4 4.5-4s4.100 1.400 4.500 4"/><path d="M11 3.300a2.500 2.500 0 0 1 0 4.400M12.500 9.800c1.100.6 1.800 1.900 2 3.700"/></svg>Users<span class="tab-count" id="users-count"></span></button>
+      <button class="tab" data-tab="docs" type="button"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2.500h7l3 3v8H3z"/><path d="M5.500 8h5M5.500 10.500h5"/></svg>Documentation<span class="tab-count" id="docs-count"></span></button>
       <button class="tab" data-tab="settings" type="button"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.500h6M12 4.500h2M2 11.500h2M8 11.500h6"/><circle cx="10" cy="4.500" r="2"/><circle cx="6" cy="11.500" r="2"/></svg>Settings</button>
       <button class="tab" data-tab="audit" type="button"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h6"/></svg>Audit log</button>
     </nav>
@@ -189,6 +190,30 @@
         <div><dt>Creator</dt><dd>Editor, plus create collections</dd></div>
         <div><dt>Admin</dt><dd>Everything, including deletes and this panel</dd></div>
       </dl>
+    </section>
+
+    <!-- Documentation -->
+    <section id="tab-docs" class="panel" hidden>
+      <div class="panel-head">
+        <h2>Documentation</h2>
+        <div class="panel-tools">
+          <button class="icon-btn" id="docs-refresh" type="button" title="Refresh" aria-label="Refresh documentation sites"><svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.500 8a5.500 5.500 0 1 1-1.600-3.900"/><path d="M13.500 2v3h-3"/></svg></button>
+        </div>
+      </div>
+      <p class="panel-intro muted">Sites are created and published from the Dispatch app (a collection's menu, then Documentation). Each site is served only on its own verified domain, never on this server's address. Point the domain at this server and set up HTTPS for it, or add the TXT record shown, then verify.</p>
+      <div class="tablewrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th scope="col">Site</th>
+              <th scope="col">Domain</th>
+              <th scope="col">Status</th>
+              <th scope="col" class="u-actions-h"><span class="visually-hidden">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody id="docs-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- Settings -->

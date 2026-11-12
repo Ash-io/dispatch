@@ -45,8 +45,16 @@ export function aiSettings() {
           } }, 'Refresh models') : null,
           p ? h('button', { class: 'btn ghost sm', onclick: async () => { await bridge.aiDisconnect(meta.id); toast(`${meta.label} disconnected`); render(); } }, 'Disconnect') : null));
     });
+    const docsChoice = state.settings.aiDocsModel;
+    const docsPicker = providers.some((p) => p.models?.length)
+      ? h('select', { class: 'select', onchange: (e) => { if (!e.target.value) delete state.settings.aiDocsModel; else { const [provider, ...rest] = e.target.value.split('\n'); state.settings.aiDocsModel = { provider, model: rest.join('\n') }; } S.saveSettings(); } },
+        h('option', { value: '', selected: !docsChoice }, 'Same as above'),
+        providers.filter((p) => p.models?.length).map((p) => h('optgroup', { label: p.local ? `${p.label} · on this machine` : p.label },
+          p.models.map((m) => h('option', { value: `${p.id}\n${m.id}`, selected: docsChoice?.provider === p.id && docsChoice?.model === m.id }, [m.name || m.id, m.detail && `  (${m.detail})`].filter(Boolean).join(''))))))
+      : null;
     wrap.replaceChildren(
-      h('div', { class: 'form-grid' }, h('label', null, 'Model'), picker),
+      h('div', { class: 'form-grid' }, h('label', null, 'Model'), picker,
+        docsPicker ? h('label', { title: 'Writing documentation is the heaviest task; a larger model writes better descriptions.' }, 'Documentation model') : null, docsPicker),
       h('div', { class: 'ai-providers' }, rows));
   };
   render();
@@ -91,19 +99,37 @@ function setupDialog() {
 
 const consented = (id) => state.settings.aiConsent === true ? id === 'anthropic' : !!state.settings.aiConsent?.[id];
 
-/** The provider and model to use, once set up and agreed to; null to stop. */
-async function ready() {
+/**
+ * The provider and model to use, once set up and agreed to; null to stop.
+ * `purpose: 'docs'` prefers the documentation model and explains what that sends.
+ */
+export async function ready({ purpose } = {}) {
   let providers = await bridge.aiProviders().catch(() => []);
   for (const p of providers) if (!p.models?.length) { try { Object.assign(p, await bridge.aiRefreshModels(p.id)); } catch { /* shown in Settings */ } }
+  if (purpose === 'docs') {
+    const docs = chooseModel(state.settings.aiDocsModel, providers);
+    if (docs && state.settings.aiDocsModel && docs.provider === state.settings.aiDocsModel.provider && docs.model === state.settings.aiDocsModel.model) {
+      const p = providers.find((x) => x.id === docs.provider);
+      if (p.local || consented(p.id)) return docs;
+      return consentFor(p, docs, purpose);
+    }
+  }
   const choice = chooseModel(state.settings.aiModel, providers);
   if (!choice) { setupDialog(); return null; }
   if (state.settings.aiModel?.provider !== choice.provider || state.settings.aiModel?.model !== choice.model) { state.settings.aiModel = choice; S.saveSettings(); }
   const p = providers.find((x) => x.id === choice.provider);
   if (p.local || consented(p.id)) return choice;
+  return consentFor(p, choice, purpose);
+}
+
+function consentFor(p, choice, purpose) {
+  const what = purpose === 'docs'
+    ? `Writing documentation sends ${p.label} (${p.baseUrl}) facts about the collection: request names, paths, parameter and field names, types, and example values after secrets and personal data have been replaced.`
+    : `Requests you ask about are sent to ${p.label} (${p.baseUrl}): method, URL and headers as written ({{variables}} are not filled in, and credential headers are redacted), the body, and for responses the status, headers and up to 30 KB of body.`;
   return new Promise((resolve) => {
     modal({
       title: 'Before the assistant runs',
-      body: h('div', null, h('p', null, `Requests you ask about are sent to ${p.label} (${p.baseUrl}): method, URL and headers as written ({{variables}} are not filled in, and credential headers are redacted), the body, and for responses the status, headers and up to 30 KB of body.`),
+      body: h('div', null, h('p', null, what),
         h('p', { class: 'hint' }, 'Avoid it for responses that contain data you\'re not allowed to share, or use a model that runs on this machine.')),
       onClose: () => resolve(null),
       actions: [{ label: 'Cancel', onClick: () => { resolve(null); } }, { label: 'Continue', primary: true, onClick: () => {

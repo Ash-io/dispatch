@@ -1892,6 +1892,363 @@ async function serveAdmin(env, request, rest) {
 }
 
 // ---------------------------------------------------------------------------
+// published documentation: sites built by the desktop app, served only on
+// their own verified domain (same rules as server/src/docs.rs)
+
+const DOCS_WELL_KNOWN = "/.well-known/dispatch-docs/";
+const DOCS_MAX_FILE = 1024 * 1024;
+const DOCS_MAX_VERSION = 20 * 1024 * 1024;
+const DOCS_MAX_FILES = 1000;
+const DOCS_TYPES = [
+  "text/html; charset=utf-8",
+  "text/css; charset=utf-8",
+  "text/javascript; charset=utf-8",
+  "application/json",
+  "text/markdown; charset=utf-8",
+  "text/plain; charset=utf-8",
+  "image/svg+xml",
+  "application/yaml",
+  "application/xml",
+];
+const DOCS_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const SITE_COLS = "id, workspace_id, collection_uid, name, hostname, domain_status, verify_token, verified_at, checked_at, check_message, online, current_version, created_by, created_at, updated_at";
+
+const docsAllowHttp = (env) => String(env.DOCS_ALLOW_HTTP ?? "").toLowerCase() === "true";
+const siteLive = (s) => !!s.online && s.domain_status === "verified" && s.current_version !== null && s.current_version !== undefined;
+
+function siteJson(s, withToken, allowHttp) {
+  const out = {
+    id: s.id, workspace_id: s.workspace_id, collection_uid: s.collection_uid, name: s.name,
+    hostname: s.hostname ?? null, domain_status: s.domain_status, verified_at: s.verified_at ?? null,
+    checked_at: s.checked_at ?? null, check_message: s.check_message ?? null, online: !!s.online, live: siteLive(s),
+    current_version: s.current_version ?? null, created_by: s.created_by ?? null, created_at: s.created_at, updated_at: s.updated_at,
+    url: s.hostname ? `${allowHttp ? "http" : "https"}://${s.hostname}/` : null,
+  };
+  if (withToken) out.verify_token = s.verify_token ?? null;
+  return out;
+}
+
+// The host a request was sent to: lowercase, no trailing dot, no port unless
+// DOCS_ALLOW_HTTP is on.
+function requestHost(request, allowHttp) {
+  const raw = (request.headers.get("Host") || new URL(request.url).host || "").trim().replace(/\.$/, "").toLowerCase();
+  if (allowHttp) return raw;
+  if (raw.startsWith("[")) return `[${raw.slice(1).split("]")[0]}]`;
+  const m = /^(.*):(\d+)$/.exec(raw);
+  return m ? m[1] : raw;
+}
+
+function normalizeHostname(raw, allowHttp) {
+  let text = String(raw).trim().replace(/\/+$/, "").toLowerCase().replace(/^https?:\/\//, "").replace(/\.$/, "");
+  let port = null;
+  const m = /^(.*):(\d+)$/.exec(text);
+  if (m && allowHttp) { text = m[1]; port = m[2]; }
+  const labels = text.split(".");
+  const labelOk = (l) => l.length > 0 && l.length <= 63 && !l.startsWith("-") && !l.endsWith("-") && /^[a-z0-9-]+$/.test(l);
+  const dnsOk = text.length <= 253 && labels.every(labelOk) && (labels.length >= 2 || (allowHttp && text === "localhost"));
+  const notIp = !labels.every((l) => /^\d+$/.test(l));
+  if (!dnsOk || !notIp) throw fail(400, `"${String(raw).trim()}" isn't a domain name. Use a domain or subdomain such as docs.example.com.`);
+  return port ? `${text}:${port}` : text;
+}
+
+function docsPage(status, title, message) {
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="font:16px/1.5 system-ui,sans-serif;max-width:36rem;margin:15vh auto;padding:0 1.5rem;color:#333"><h1 style="font-size:1.4rem">${title}</h1><p>${message}</p></body></html>`;
+  return new Response(body, { status, headers: docsHeaders("text/html; charset=utf-8", "no-store") });
+}
+
+function docsHeaders(contentType, cache) {
+  return {
+    "Content-Type": contentType,
+    "Content-Security-Policy": DOCS_CSP,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Cache-Control": cache,
+  };
+}
+
+async function findDocsFile(env, siteId, version, path) {
+  const p = path.replace(/^\/+/, "");
+  const candidates = p === "" || p.endsWith("/") ? [`${p}index.html`] : [p, `${p}.html`, `${p}/index.html`];
+  for (const c of candidates) {
+    const row = await dbFirst(env, "SELECT content_type, body FROM docs_files WHERE site_id = ? AND version = ? AND path = ?", [siteId, version, c]);
+    if (row) return row;
+  }
+  return null;
+}
+
+function docsFileResponse(row, method) {
+  if (!row) return docsPage(404, "Page not found", "There's no page at this address.");
+  return new Response(method === "HEAD" ? null : row.body, { status: 200, headers: docsHeaders(row.content_type, "public, max-age=60") });
+}
+
+// Runs before routing: documentation domains get documentation and nothing else.
+async function docsHost(request, env) {
+  const host = requestHost(request, docsAllowHttp(env));
+  if (!host) return null;
+  const site = await dbFirst(env, `SELECT ${SITE_COLS} FROM docs_sites WHERE hostname = ?`, [host]);
+  if (!site) return null;
+  const path = new URL(request.url).pathname;
+  if (path.startsWith(DOCS_WELL_KNOWN)) {
+    const token = path.slice(DOCS_WELL_KNOWN.length);
+    if (site.verify_token && token === site.verify_token) return new Response(site.verify_token, { status: 200, headers: docsHeaders("text/plain; charset=utf-8", "no-store") });
+    return docsPage(404, "Page not found", "There's no page at this address.");
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") return docsPage(405, "Not allowed", "Documentation pages can only be read.");
+  if (!siteLive(site)) return docsPage(404, "Not published yet", "This documentation isn't published yet.");
+  return docsFileResponse(await findDocsFile(env, site.id, site.current_version, path), request.method);
+}
+
+// Proves the domain reaches this server (the well-known URL returns the token),
+// or that a TXT record _dispatch-docs.<domain> holds it. A Worker usually can't
+// fetch its own custom domain, so the TXT record is the reliable route here.
+async function checkDomain(allowHttp, hostname, token) {
+  const url = `${allowHttp ? "http" : "https"}://${hostname}${DOCS_WELL_KNOWN}${token}`;
+  let problem;
+  try {
+    const r = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+    if (r.ok && (await r.text()).trim() === token) return null;
+    problem = r.ok ? `${url} answered, but not with this server's token` : `${url} returned ${r.status}`;
+  } catch (e) {
+    problem = `couldn't reach ${url} (${e?.message || e})`;
+  }
+  const bare = hostname.split(":")[0];
+  try {
+    const r = await fetch(`https://cloudflare-dns.com/dns-query?name=_dispatch-docs.${bare}&type=TXT`, { headers: { Accept: "application/dns-json" }, signal: AbortSignal.timeout(10_000) });
+    const v = await r.json();
+    if ((v.Answer || []).some((a) => String(a.data || "").replace(/^"|"$/g, "") === token)) return null;
+  } catch { /* fall through */ }
+  return `Not verified: ${problem}, and there's no TXT record _dispatch-docs.${bare} with the token.`;
+}
+
+const textField = (v, k) => (typeof v?.[k] === "string" && v[k].trim() ? v[k].trim() : null);
+const inScope = (p, ws) => { const s = scopeOf(p); return s === null || s.includes(ws); };
+
+async function reachableSite(env, principal, id) {
+  const site = await dbFirst(env, `SELECT ${SITE_COLS} FROM docs_sites WHERE id = ?`, [id]);
+  if (!site) throw fail(404, "No such documentation site");
+  if (!inScope(principal, site.workspace_id)) throw fail(403, "You don't have access to this workspace");
+  return site;
+}
+
+async function siteResponse(env, id, status, withToken) {
+  const site = await dbFirst(env, `SELECT ${SITE_COLS} FROM docs_sites WHERE id = ?`, [id]);
+  if (!site) return fail(404, "No such documentation site");
+  return jsonOut(status, siteJson(site, withToken, docsAllowHttp(env)));
+}
+
+async function docsAudited(env, who, action, method, path, run) {
+  let resp;
+  try { resp = await run(); } catch (e) { if (e instanceof Response) resp = e; else throw e; }
+  await auditInsert(env, who?.userId ?? null, who?.email ?? null, method, path, resp.status, action);
+  return resp;
+}
+
+async function handleDocsList(env, request, requireAuth, query) {
+  let p;
+  try { p = await resolvePrincipal(env, request, requireAuth); } catch (e) { return e; }
+  const collection = new URLSearchParams(query).get("collection");
+  const rows = await dbAll(env, `SELECT ${SITE_COLS} FROM docs_sites ORDER BY name COLLATE NOCASE`);
+  const sites = rows.filter((s) => inScope(p, s.workspace_id) && (!collection || s.collection_uid === collection)).map((s) => siteJson(s, p.role === "admin", docsAllowHttp(env)));
+  return jsonOut(200, { sites });
+}
+
+async function handleDocsCreate(env, request, requireAuth) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  return docsAudited(env, principal, "docs_site_create", "POST", "/admin/docs-sites", async () => {
+    if (error) return error;
+    const body = await readJsonObject(request);
+    if (!body) return fail(400, "Body must be valid JSON");
+    const ws = textField(body, "workspace_id"), col = textField(body, "collection_uid"), name = textField(body, "name");
+    if (!ws || !col || !name) return fail(400, "Send workspace_id, collection_uid and name");
+    if ([...name].length > 120) return fail(400, "Keep the name under 120 characters");
+    const id = crypto.randomUUID();
+    const now = nowIso();
+    try {
+      await dbRun(env, "INSERT INTO docs_sites (id, workspace_id, collection_uid, name, domain_status, online, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'none', 0, ?, ?, ?)", [id, ws, col, name, principal.email, now, now]);
+    } catch (e) {
+      if (/UNIQUE|constraint/i.test(String(e?.message || e))) return fail(409, "This collection already has a documentation site");
+      throw e;
+    }
+    return siteResponse(env, id, 201, true);
+  });
+}
+
+async function handleDocsUpdate(env, request, requireAuth, id) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  return docsAudited(env, principal, "docs_site_update", "PATCH", `/admin/docs-sites/${id}`, async () => {
+    if (error) return error;
+    const body = await readJsonObject(request);
+    if (!body) return fail(400, "Body must be valid JSON");
+    const allowHttp = docsAllowHttp(env);
+    const site = await dbFirst(env, `SELECT ${SITE_COLS} FROM docs_sites WHERE id = ?`, [id]);
+    if (!site) return fail(404, "No such documentation site");
+    const now = nowIso();
+    if ("name" in body) {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!name || [...name].length > 120) return fail(400, "The name can't be empty or longer than 120 characters");
+      await dbRun(env, "UPDATE docs_sites SET name = ?, updated_at = ? WHERE id = ?", [name, now, id]);
+    }
+    if ("hostname" in body) {
+      let host = null;
+      if (body.hostname !== null && !(typeof body.hostname === "string" && !body.hostname.trim())) {
+        if (typeof body.hostname !== "string") return fail(400, "hostname must be a string or null");
+        host = normalizeHostname(body.hostname, allowHttp);
+      }
+      if (host && host === requestHost(request, allowHttp)) return fail(400, "That's this server's own address. Use a separate domain or subdomain for the documentation, such as docs.example.com.");
+      if (host !== (site.hostname ?? null)) {
+        try {
+          if (host) await dbRun(env, "UPDATE docs_sites SET hostname = ?, domain_status = 'pending', verify_token = ?, verified_at = NULL, checked_at = NULL, check_message = NULL, online = 0, updated_at = ? WHERE id = ?", [host, toHex(crypto.getRandomValues(new Uint8Array(16))), now, id]);
+          else await dbRun(env, "UPDATE docs_sites SET hostname = NULL, domain_status = 'none', verify_token = NULL, verified_at = NULL, checked_at = NULL, check_message = NULL, online = 0, updated_at = ? WHERE id = ?", [now, id]);
+        } catch (e) {
+          if (/UNIQUE|constraint/i.test(String(e?.message || e))) return fail(409, "Another documentation site already uses that domain");
+          throw e;
+        }
+      }
+    }
+    if ("online" in body) {
+      if (typeof body.online !== "boolean") return fail(400, "online must be true or false");
+      const cur = await dbFirst(env, `SELECT ${SITE_COLS} FROM docs_sites WHERE id = ?`, [id]);
+      if (body.online && cur.domain_status !== "verified") return fail(400, "Add and verify a domain before putting the site online");
+      if (body.online && (cur.current_version === null || cur.current_version === undefined)) return fail(400, "Publish a version before putting the site online");
+      await dbRun(env, "UPDATE docs_sites SET online = ?, updated_at = ? WHERE id = ?", [body.online ? 1 : 0, now, id]);
+    }
+    return siteResponse(env, id, 200, true);
+  });
+}
+
+async function handleDocsDelete(env, request, requireAuth, id) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  return docsAudited(env, principal, "docs_site_delete", "DELETE", `/admin/docs-sites/${id}`, async () => {
+    if (error) return error;
+    const site = await dbFirst(env, "SELECT id FROM docs_sites WHERE id = ?", [id]);
+    if (!site) return fail(404, "No such documentation site");
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM docs_files WHERE site_id = ?").bind(id),
+      env.DB.prepare("DELETE FROM docs_versions WHERE site_id = ?").bind(id),
+      env.DB.prepare("DELETE FROM docs_sites WHERE id = ?").bind(id),
+    ]);
+    return responseWithCors(204);
+  });
+}
+
+async function handleDocsVerify(env, request, requireAuth, id) {
+  const { principal, error } = await requireAdmin(env, request, requireAuth);
+  return docsAudited(env, principal, "docs_domain_verify", "POST", `/admin/docs-sites/${id}/verify`, async () => {
+    if (error) return error;
+    const site = await dbFirst(env, `SELECT ${SITE_COLS} FROM docs_sites WHERE id = ?`, [id]);
+    if (!site) return fail(404, "No such documentation site");
+    if (!site.hostname || !site.verify_token) return fail(400, "Add a domain first");
+    const problem = await checkDomain(docsAllowHttp(env), site.hostname, site.verify_token);
+    const now = nowIso();
+    if (problem === null) await dbRun(env, "UPDATE docs_sites SET domain_status = 'verified', verified_at = ?, checked_at = ?, check_message = NULL, updated_at = ? WHERE id = ? AND hostname = ?", [now, now, now, id, site.hostname]);
+    else await dbRun(env, "UPDATE docs_sites SET domain_status = 'failed', checked_at = ?, check_message = ?, updated_at = ? WHERE id = ? AND hostname = ?", [now, problem, now, id, site.hostname]);
+    return siteResponse(env, id, 200, true);
+  });
+}
+
+function validDocsPath(path) {
+  return typeof path === "string" && path.length > 0 && path.length <= 200 && !path.startsWith("/")
+    && !path.split("/").some((seg) => seg === "" || seg === "." || seg === "..") && /^[A-Za-z0-9._/-]+$/.test(path);
+}
+
+async function handleDocsPublish(env, request, requireAuth, id) {
+  let p;
+  try { p = await resolvePrincipal(env, request, requireAuth); } catch (e) { return e; }
+  return docsAudited(env, p, "docs_publish", "POST", `/docs-sites/${id}/versions`, async () => {
+    if (rankOf(p) < ROLE_RANK.editor) return fail(403, "Viewers can't publish documentation");
+    const site = await reachableSite(env, p, id);
+    const body = await readJsonObject(request);
+    if (!body) return fail(400, "Body must be valid JSON");
+    const files = body.files;
+    if (!Array.isArray(files)) return fail(400, "Send files: [{ path, content_type, body }]");
+    if (!files.length || files.length > DOCS_MAX_FILES) return fail(400, `A version needs between 1 and ${DOCS_MAX_FILES} files`);
+    const enc = new TextEncoder();
+    let total = 0;
+    const seen = new Set();
+    for (const f of files) {
+      if (typeof f?.path !== "string" || typeof f?.content_type !== "string" || typeof f?.body !== "string") return fail(400, "Every file needs path, content_type and body");
+      if (!validDocsPath(f.path)) return fail(400, `"${f.path}" isn't an allowed file path`);
+      if (!DOCS_TYPES.includes(f.content_type)) return fail(400, `${f.path}: content type "${f.content_type}" isn't allowed`);
+      const size = enc.encode(f.body).length;
+      if (size > DOCS_MAX_FILE) return fail(413, `${f.path} is larger than 1 MB`);
+      if (seen.has(f.path)) return fail(400, `${f.path} appears twice`);
+      seen.add(f.path);
+      total += size;
+    }
+    if (total > DOCS_MAX_VERSION) return fail(413, "A version can't be larger than 20 MB");
+    if (!seen.has("index.html")) return fail(400, "A version needs an index.html");
+    const changelog = typeof body.changelog === "string" ? [...body.changelog].slice(0, 20000).join("") : "";
+    const row = await dbFirst(env, "SELECT COALESCE(MAX(version), 0) + 1 AS v FROM docs_versions WHERE site_id = ?", [site.id]);
+    const version = row?.v || 1;
+    const now = nowIso();
+    const stmts = [
+      env.DB.prepare("INSERT INTO docs_versions (site_id, version, published_by, published_at, changelog, file_count, total_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(site.id, version, p.email ?? "open mode", now, changelog, files.length, total),
+      ...files.map((f) => env.DB.prepare("INSERT INTO docs_files (site_id, version, path, content_type, body) VALUES (?, ?, ?, ?, ?)").bind(site.id, version, f.path, f.content_type, f.body)),
+      env.DB.prepare("UPDATE docs_sites SET current_version = ?, updated_at = ? WHERE id = ?").bind(version, now, site.id),
+    ];
+    // D1 runs a batch as one transaction.
+    await env.DB.batch(stmts);
+    const fresh = await dbFirst(env, `SELECT ${SITE_COLS} FROM docs_sites WHERE id = ?`, [site.id]);
+    return jsonOut(201, { version, site: siteJson(fresh, p.role === "admin", docsAllowHttp(env)) });
+  });
+}
+
+async function handleDocsVersions(env, request, requireAuth, id) {
+  try {
+    const p = await resolvePrincipal(env, request, requireAuth);
+    const site = await reachableSite(env, p, id);
+    const rows = await dbAll(env, "SELECT version, published_by, published_at, changelog, file_count, total_bytes FROM docs_versions WHERE site_id = ? ORDER BY version DESC", [site.id]);
+    return jsonOut(200, { versions: rows.map((r) => ({ ...r, published_by: r.published_by ?? null, current: site.current_version === r.version })) });
+  } catch (e) { if (e instanceof Response) return e; throw e; }
+}
+
+async function handleDocsSetCurrent(env, request, requireAuth, id) {
+  let p;
+  try { p = await resolvePrincipal(env, request, requireAuth); } catch (e) { return e; }
+  return docsAudited(env, p, "docs_rollback", "PATCH", `/docs-sites/${id}`, async () => {
+    if (rankOf(p) < ROLE_RANK.editor) return fail(403, "Viewers can't change the published version");
+    const site = await reachableSite(env, p, id);
+    const body = await readJsonObject(request);
+    if (!body) return fail(400, "Body must be valid JSON");
+    if (!Number.isInteger(body.current_version)) return fail(400, "Send current_version");
+    const exists = await dbFirst(env, "SELECT 1 AS x FROM docs_versions WHERE site_id = ? AND version = ?", [site.id, body.current_version]);
+    if (!exists) return fail(404, "No such version");
+    await dbRun(env, "UPDATE docs_sites SET current_version = ?, updated_at = ? WHERE id = ?", [body.current_version, nowIso(), site.id]);
+    return siteResponse(env, site.id, 200, p.role === "admin");
+  });
+}
+
+async function handleDocsPreview(env, request, requireAuth, id, version, path) {
+  try {
+    const p = await resolvePrincipal(env, request, requireAuth);
+    const site = await reachableSite(env, p, id);
+    const row = await findDocsFile(env, site.id, version, path);
+    if (!row) return fail(404, "No such file in that version");
+    return docsFileResponse(row, request.method);
+  } catch (e) { if (e instanceof Response) return e; throw e; }
+}
+
+async function docsRoute(request, env, path, query, requireAuth) {
+  const m = request.method;
+  if (path === "/admin/docs-sites" && m === "POST") return handleDocsCreate(env, request, requireAuth);
+  let r = /^\/admin\/docs-sites\/([^/]+)\/verify$/.exec(path);
+  if (r && m === "POST") return handleDocsVerify(env, request, requireAuth, percentDecode(r[1]));
+  r = /^\/admin\/docs-sites\/([^/]+)$/.exec(path);
+  if (r && m === "PATCH") return handleDocsUpdate(env, request, requireAuth, percentDecode(r[1]));
+  if (r && m === "DELETE") return handleDocsDelete(env, request, requireAuth, percentDecode(r[1]));
+  if (path === "/docs-sites" && m === "GET") return handleDocsList(env, request, requireAuth, query);
+  r = /^\/docs-sites\/([^/]+)$/.exec(path);
+  if (r && m === "PATCH") return handleDocsSetCurrent(env, request, requireAuth, percentDecode(r[1]));
+  r = /^\/docs-sites\/([^/]+)\/versions$/.exec(path);
+  if (r && m === "GET") return handleDocsVersions(env, request, requireAuth, percentDecode(r[1]));
+  if (r && m === "POST") return handleDocsPublish(env, request, requireAuth, percentDecode(r[1]));
+  r = /^\/docs-sites\/([^/]+)\/versions\/(\d+)\/files\/(.+)$/.exec(path);
+  if (r && (m === "GET" || m === "HEAD")) return handleDocsPreview(env, request, requireAuth, percentDecode(r[1]), Number(r[2]), r[3]);
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // router
 
 // Contract paths are their own routes; everything else falls into the proxy
@@ -1903,6 +2260,9 @@ export default {
     } catch (e) {
       return jsonOut(500, { error: `Server database failed to initialize: ${e?.message || e}` });
     }
+    // A documentation domain never reaches the API or the admin panel.
+    const docs = await docsHost(request, env);
+    if (docs) return docs;
     return route(request, env);
   },
 };
@@ -1925,6 +2285,9 @@ function ensureSchema(env) {
       `CREATE TABLE IF NOT EXISTS dispatch_workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, globals TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
       `CREATE TABLE IF NOT EXISTS dispatch_items (uid TEXT PRIMARY KEY, kind TEXT NOT NULL, workspace_id TEXT NOT NULL, name TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
       `CREATE INDEX IF NOT EXISTS dispatch_items_workspace ON dispatch_items (workspace_id, kind)`,
+      `CREATE TABLE IF NOT EXISTS docs_sites (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, collection_uid TEXT NOT NULL UNIQUE, name TEXT NOT NULL, hostname TEXT UNIQUE, domain_status TEXT NOT NULL DEFAULT 'none', verify_token TEXT, verified_at TEXT, checked_at TEXT, check_message TEXT, online INTEGER NOT NULL DEFAULT 0, current_version INTEGER, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS docs_versions (site_id TEXT NOT NULL, version INTEGER NOT NULL, published_by TEXT, published_at TEXT NOT NULL, changelog TEXT NOT NULL DEFAULT '', file_count INTEGER NOT NULL DEFAULT 0, total_bytes INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (site_id, version))`,
+      `CREATE TABLE IF NOT EXISTS docs_files (site_id TEXT NOT NULL, version INTEGER NOT NULL, path TEXT NOT NULL, content_type TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (site_id, version, path))`,
       `CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, user_id INTEGER, email TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status INTEGER NOT NULL)`,
     ];
     schemaReady = env.DB.batch(ddl.map((sql) => env.DB.prepare(sql)));
@@ -1949,7 +2312,7 @@ async function route(request, env) {
     // map /admin/ → "/" and /admin/<file> → "/<file>". The admin API paths
     // (/admin/users, /admin/postman-accounts, /admin/workspaces, /admin/settings,
     // /admin/audit) are handled below, not here.
-    const isAdminApi = /^\/admin\/(users|postman-accounts|workspaces|dispatch-workspaces|settings|audit)/.test(path);
+    const isAdminApi = /^\/admin\/(users|postman-accounts|workspaces|dispatch-workspaces|settings|audit|docs-sites)/.test(path);
     if (!isAdminApi) return serveAdmin(env, request, path === "/admin/" ? "" : path.slice("/admin/".length));
     }
   }
@@ -1990,6 +2353,10 @@ async function route(request, env) {
     if (request.method === "PATCH") return handleAdminSettingsPatch(env, request, requireAuth);
   }
   if (path === "/admin/audit" && request.method === "GET") return handleAdminAudit(env, request, requireAuth, query);
+
+  // Published documentation.
+  const docsResponse = await docsRoute(request, env, path, query, requireAuth);
+  if (docsResponse) return docsResponse;
 
   // The proxy fallback for everything else (Postman path space).
   return proxy(env, request, requireAuth);

@@ -223,6 +223,7 @@ function colMenu(e, entry, row) {
     { label: 'Run collection', icon: 'play', onClick: () => C.openRunner(entry, null) },
     { label: 'Request chain', icon: 'link', onClick: () => C.openChain(entry) },
     { label: mockFor(entry) ? `Mock server (running on :${mockFor(entry).port})` : 'Mock server…', icon: 'layers', onClick: () => C.openMock(entry) },
+    S.activeProfile()?.kind === 'server' && !entry.pendingCreate ? { label: 'Documentation…', icon: 'globe', onClick: () => import('./docsite.js').then((m) => m.openDocsSite(entry)).catch((er) => toast(errText(er), { error: true })) } : null,
     '-',
     entry.linkedDir
       ? { label: 'Reload from folder', icon: 'sync', onClick: () => checkFolders().then(() => toast('Folder checked')) }

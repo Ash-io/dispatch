@@ -75,13 +75,13 @@ const runnerScopes = ({ ws, env, collection, colOverlay, row, iteration }) => ({
  *         ws (globals/overlays; defaults to the open workspace), recordHistory }
  * Cancellation: throws nothing — returns a cancelled summary.
  */
-export async function runBatch({ entry, folderId = null, iterations = 1, rows = [], delayMs = 0, onProgress, isStopped, env, send, parallel = false, saveExamples = 'none', ws: wsIn, recordHistory = true }) {
+export async function runBatch({ entry, folderId = null, iterations = 1, rows = [], delayMs = 0, onProgress, isStopped, env, send, parallel = false, saveExamples = 'none', ws: wsIn, recordHistory = true, only = null }) {
   await S.ensureCollection(entry);
   const collection = entry.data;
   const ws = wsIn || state.ws || { globals: { values: [], overlay: {}, dirty: false }, colOverlays: {} };
   env = env === null ? null : (env ?? S.activeEnvEntry());
   if (env && !env.data) { try { await S.pullEnvironment(env); } catch { /* fall back to values */ } if (env && !env.data) env = null; }
-  const reqs = flattenRequests(collection, folderId);
+  const reqs = flattenRequests(collection, folderId).filter((r) => !only || only.has(itemId(r.item ?? r)));
   if (!reqs.length) throw new Error('Nothing to run: this collection or folder has no requests.');
 
   const total = Math.max(1, rows.length || iterations);

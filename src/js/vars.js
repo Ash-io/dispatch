@@ -210,6 +210,8 @@ export function setVault(entries) {
   for (const [k, v] of Object.entries(entries || {})) vault.set(k, String(v));
 }
 export const vaultNames = () => [...vault.keys()].sort();
+/** Vault values, for checking that generated documentation doesn't contain any. Never send or store these. */
+export const vaultValues = () => [...vault.values()];
 
 export class Resolver {
   /** scopes: { local, environment, collection, globals } as Scope instances */

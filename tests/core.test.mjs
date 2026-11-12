@@ -1343,3 +1343,196 @@ test('parseStructured accepts fenced JSON and explains failures', () => {
   assert.throws(() => parseStructured('{"b":1}', schema), /\$\.a is missing/);
   assert.match(retryPrompt('Make a request', 'The answer wasn\'t valid JSON.'), /^Make a request\n\nYour previous answer couldn't be used: The answer wasn't valid JSON\. Reply again/);
 });
+
+// ---------- documentation generator ----------
+import { createScrubber, findSecrets } from '../src/js/docgen/scrub.js';
+import { gatherEndpoints, splitUrl, testsFrom } from '../src/js/docgen/gather.js';
+import { mergeShape, buildFacts, structure, diffStructure, displayPath } from '../src/js/docgen/facts.js';
+import { lint, plan, writeAll, repeatedOpenings } from '../src/js/docgen/write.js';
+import { buildSite, markdown, schemaFrom, previewHtml } from '../src/js/docgen/build.js';
+import { generateDocs, OMIT } from '../src/js/docgen/index.js';
+import { zip, crc32 } from '../src/js/docgen/zip.js';
+
+const DOCS_COLLECTION = {
+  info: { name: 'Shop API', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+  auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{token}}' }] },
+  item: [
+    { name: 'Auth', item: [
+      { id: 'login', name: 'Log in', request: { method: 'POST', auth: { type: 'noauth' }, url: { raw: '{{baseUrl}}/v1/login' }, header: [{ key: 'Content-Type', value: 'application/json' }], body: { mode: 'raw', raw: '{"email":"ada@acme.io","password":"hunter2hunter2"}', options: { raw: { language: 'json' } } } },
+        event: [{ listen: 'test', script: { exec: ["pm.test('logged in', () => pm.response.to.have.status(200));", "pm.environment.set('token', pm.response.json().token);"] } }],
+        response: [{ name: 'OK', code: 200, status: 'OK', header: [{ key: 'Set-Cookie', value: 'sid=abcdef1234567890abcdef' }], body: '{"token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEifQ.c2lnbmF0dXJlc2lnbmF0dXJl","expires_in":3600}' }] },
+    ] },
+    { name: 'Orders', description: 'Orders placed by customers.', item: [
+      { id: 'create', name: 'Create order', request: { method: 'POST', url: { raw: '{{baseUrl}}/v1/orders' }, header: [{ key: 'Idempotency-Key', value: '{{$guid}}' }], body: { mode: 'raw', raw: '{"amount": 2500, "currency": "NGN", "customer_email": "ada@acme.io"}', options: { raw: { language: 'json' } } } },
+        event: [{ listen: 'test', script: { exec: ["pm.test('created', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('orderId', pm.response.json().id);"] } }],
+        response: [
+          { name: 'Created', code: 201, status: 'Created', header: [], body: '{"id":"5f0c2b3e-1d2a-4c3b-9a8b-7c6d5e4f3a2b","status":"pending","amount":2500,"currency":"NGN","customer":{"email":"ada@acme.io","phone":"+234 803 123 4567"},"card":"5555 5555 5555 4444"}' },
+          { name: 'Bad amount', code: 422, status: 'Unprocessable', header: [], body: '{"error":{"code":"invalid_amount","message":"amount must be positive"}}' },
+        ] },
+      { id: 'get', name: 'Get order', request: { method: 'GET', url: { raw: '{{baseUrl}}/v1/orders/:id', variable: [{ key: 'id', value: '{{orderId}}' }] } },
+        response: [{ name: 'Found', code: 200, status: 'OK', header: [], body: '{"id":"5f0c2b3e-1d2a-4c3b-9a8b-7c6d5e4f3a2b","status":"paid","amount":2500,"currency":"NGN","paid_at":"2026-11-01T10:00:00Z","customer":{"email":"ada@acme.io","phone":null}}' }] },
+    ] },
+  ],
+};
+const DOCS_HISTORY = [{ ref: { col: 'col-1', item: 'get' }, status: 200, bodyText: '{"id":"aa0c2b3e-1d2a-4c3b-9a8b-7c6d5e4f3a2b","status":"refunded","amount":10,"currency":"NGN","paid_at":"2026-11-02T10:00:00Z","customer":{"email":"bo@acme.io","phone":null}}' }];
+
+test('the scrubber swaps secrets and personal data for consistent fakes', () => {
+  const s = createScrubber({ known: ['my-vault-secret-value'] });
+  const out = s.body('{"email":"ada@acme.io","password":"hunter2hunter2","note":"key my-vault-secret-value","card":"4242 4242 4242 4242","ip":"81.2.69.160","api":"sk_live_abcdefghijklmnop1234"}', 'test');
+  const v = JSON.parse(out);
+  assert.equal(v.email, 'user1@example.com');
+  assert.notEqual(v.password, 'hunter2hunter2');
+  assert.equal(v.password.length, 'hunter2hunter2'.length);
+  assert.ok(!out.includes('my-vault-secret-value'));
+  assert.equal(v.ip, '203.0.113.' + v.ip.split('.')[3]);
+  assert.match(v.api, /^sk_live_[A-Za-z0-9]{20}$/);
+  assert.notEqual(v.api, 'sk_live_abcdefghijklmnop1234');
+  assert.equal(s.text('mail ada@acme.io again'), 'mail user1@example.com again', 'the same value gets the same fake');
+  assert.equal(s.text('{{vault:stripe}} and {{token}}'), '{{stripe}} and {{token}}', 'placeholders stay, vault prefix goes');
+  const hs = s.headers([{ key: 'Authorization', value: 'Bearer abc123def456ghi789' }, { key: 'Authorization', value: 'Bearer {{token}}' }]);
+  assert.match(hs[0].value, /^Bearer [a-z0-9]{18}$/);
+  assert.notEqual(hs[0].value, 'Bearer abc123def456ghi789');
+  assert.equal(hs[1].value, 'Bearer {{token}}');
+  assert.ok(s.log.length >= 4 && s.log.every((l) => !l.masked.includes('hunter2hunter2')));
+});
+
+test('the final scan blocks real-looking secrets but not this run\'s fakes', () => {
+  const s = createScrubber({ known: ['super-secret-1'] });
+  const fakeJwt = s.text('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEifQ.c2lnbmF0dXJlc2lnbmF0dXJl');
+  const hits = findSecrets([{ path: 'a.html', body: `ok ${fakeJwt}\nleak super-secret-1\nAKIAABCDEFGHIJKLMNOP\nPMAK-0123456789abcdef01234567` }], s);
+  assert.deepEqual(hits.map((h) => h.kind).sort(), ['AWS key', 'Postman key', 'saved secret']);
+  assert.equal(hits.find((h) => h.kind === 'saved secret').line, 2);
+});
+
+test('mergeShape reads types, nullability, formats and repeated values across samples', () => {
+  const f = Object.fromEntries(mergeShape([{ id: '5f0c2b3e-1d2a-4c3b-9a8b-7c6d5e4f3a2b', status: 'paid', n: 1, at: null, items: [{ q: 1 }] }, { id: 'aa0c2b3e-1d2a-4c3b-9a8b-7c6d5e4f3a2b', status: 'pending', n: 1.5, at: '2026-01-01T00:00:00Z', items: [] }]).map((x) => [x.path, x]));
+  assert.deepEqual(f.id.formats, ['uuid']);
+  assert.deepEqual(f.status.values.sort(), ['paid', 'pending']);
+  assert.deepEqual(f.n.types, ['number']);
+  assert.equal(f.at.nullable, true);
+  assert.deepEqual(f.at.formats, ['date-time']);
+  assert.equal(f['items[].q'].present, 1);
+  assert.equal(displayPath('/v1/orders/:id/{{x}}'), '/v1/orders/{id}/{x}');
+  assert.deepEqual(splitUrl('{{baseUrl}}/v1/orders?x=1'), { hostVar: 'baseUrl', host: '', path: '/v1/orders' });
+  assert.deepEqual(testsFrom("pm.test('a', () => pm.response.to.have.status(201));"), { tests: ['a'], statuses: [201] });
+});
+
+test('facts come from examples, history, tests and chains, already scrubbed', () => {
+  const scrub = createScrubber();
+  const eps = gatherEndpoints(DOCS_COLLECTION, { scrub, history: DOCS_HISTORY, useHistory: true, collectionUid: 'col-1' });
+  assert.equal(eps.length, 3);
+  const all = JSON.stringify(eps);
+  assert.ok(!all.includes("5555 5555 5555 4444"), "card"); assert.ok(!all.includes("+234 803 123 4567"), "phone");
+  assert.ok(!all.includes('ada@acme.io'));
+  assert.ok(!all.includes('hunter2hunter2'));
+  const sheet = buildFacts(eps, { quickstart: [{ id: 'login', sets: ['token'], usedBy: ['create'] }] });
+  assert.deepEqual(sheet.groups.map((g) => g.name), ['Auth', 'Orders']);
+  const get = sheet.endpoints.find((e) => e.id === 'get');
+  assert.equal(get.displayPath, '/v1/orders/{id}');
+  const status = get.responses[0].fields.find((f) => f.path === 'status');
+  assert.deepEqual(status.values.sort(), ['paid', 'refunded'], 'history adds what examples alone don\'t show');
+  assert.equal(get.responses[0].fields.find((f) => f.path === 'customer.phone').nullable, true);
+  assert.ok(sheet.errors.some((e) => e.code === 422));
+  assert.ok(sheet.facts.get('err.422').text.includes('error.code'));
+  assert.equal(sheet.quickstart.length, 1);
+  assert.ok(sheet.facts.get('qs.0').text.includes('`token`'));
+  const create = sheet.endpoints.find((e) => e.id === 'create');
+  assert.ok(create.requestFields.some((f) => f.path === 'amount' && f.types[0] === 'integer'));
+  assert.deepEqual(create.tests.map((t) => t.name), ['created']);
+});
+
+test('lint rejects ungrounded, banned and hedged writing', () => {
+  const facts = new Map([['f1', { text: 'response 200 field `amount` (integer); values seen: 2500' }], ['f2', { text: 'returns 404' }]]);
+  const ok = { text: 'Order total in the smallest currency unit, such as `amount` 2500.', factIds: ['f1'] };
+  assert.deepEqual(lint(ok, { kind: 'field', facts, allowed: new Set(['f1', 'f2']) }), []);
+  const bad = (text, ids = ['f1'], kind = 'field') => lint({ text, factIds: ids }, { kind, facts, allowed: new Set(['f1']) });
+  assert.match(bad('This endpoint allows you to seamlessly fetch orders.').join(), /banned wording/);
+  assert.match(bad('The total, which may include tax.').join(), /hedges/);
+  assert.match(bad('Total of up to 9999 items.').join(), /mentions 9999/);
+  assert.match(bad('Mirrors `total_due`.').join(), /total_due/);
+  assert.match(bad('Mirrors customerId on the order.').join(), /customerId/);
+  assert.match(bad('Total.', ['f2']).join(), /another page/);
+  assert.match(bad('Total.', ['nope']).join(), /don't exist/);
+  assert.match(bad('Total.', []).join(), /cites no facts/);
+  assert.match(bad('One. Two.').join(), /one sentence/);
+  assert.deepEqual(bad(''), ['left empty']);
+  assert.deepEqual([...repeatedOpenings([{ target: 'a', text: 'Returns the order.' }, { target: 'b', text: 'Returns all.' }, { target: 'c', text: 'Returns the list.' }])], ['c']);
+});
+
+test('writing keeps what passes, retries once, then leaves gaps', async () => {
+  const scrub = createScrubber();
+  const sheet = buildFacts(gatherEndpoints(DOCS_COLLECTION, { scrub }), {});
+  const calls = [];
+  const ask = async (system, prompt) => {
+    calls.push(prompt);
+    const targets = [...prompt.matchAll(/^(\S+): /gm)].map((m) => m[1]).filter((t) => !t.includes('.route') && prompt.split('TARGETS')[1].includes(`${t}:`));
+    return { items: targets.map((t) => {
+      if (t.endsWith('.summary')) return { target: t, text: calls.length > 2 ? 'Fetches one order by its id.' : 'This endpoint easily fetches it.', factIds: [`ep.${t.split('.')[1]}.route`] };
+      if (t.startsWith('ep.') && t.includes('.resp.') && t.endsWith('.amount')) return { target: t, text: 'Order total in minor units, such as 2500.', factIds: [t.replace(/^ep\.([^.]+)\.resp\.(\d+)\.amount$/, 'ep.$1.resp.$2.amount')] };
+      return { target: t, text: '', factIds: [] };
+    }) };
+  };
+  const { texts, gaps } = await writeAll(sheet, { ask, pinned: { 'ep.get-get-order.summary': 'Reads one order.' } });
+  const getAmount = Object.keys(texts).find((k) => /^ep\.get-get-order\.resp\.200\.amount$/.test(k));
+  assert.ok(getAmount, Object.keys(texts).join(', '));
+  assert.ok(!('ep.get-get-order.summary' in texts) || texts['ep.get-get-order.summary'].ai === false, 'pinned text is never sent for writing');
+  assert.ok(calls.every((c) => !c.includes('ep.get-get-order.summary:')));
+  assert.ok(gaps.length > 0);
+  assert.ok(gaps.every((g) => g.label && g.reason));
+  assert.ok(calls.some((c) => c.includes('was rejected because')), 'failures are retried with the reasons');
+});
+
+test('the built site has every page, valid links, no inline script or style, and OpenAPI', async () => {
+  const result = await generateDocs({
+    collection: DOCS_COLLECTION, history: DOCS_HISTORY, useHistory: true, collectionUid: 'col-1', known: ['hunter2hunter2'],
+    pinned: { overview: 'Orders and payments for the shop.', 'ep.get-get-order.resp.200.paid_at': OMIT },
+    site: { name: 'Shop API', accent: '#123456' }, baseUrl: 'https://api.shop.test', version: 3,
+    previous: { structure: { endpoints: [{ route: 'GET /v1/orders/{id}', name: 'Get order', statuses: [200], fields: { 200: { id: 'string', amount: 'string' } }, body: {} }] }, history: [{ version: 2, published_at: '2026-10-01T00:00:00Z', changelog: 'Older change' }] },
+  });
+  const paths = result.files.map((f) => f.path).sort();
+  for (const p of ['index.html', 'r/auth.html', 'r/orders.html', 'changelog.html', 'openapi.json', 'llms.txt', 'md/orders.md', 'search.json', 'assets/site.css', 'assets/site.js', '_dispatch/structure.json']) assert.ok(paths.includes(p), p);
+  const html = result.files.filter((f) => f.path.endsWith('.html'));
+  for (const f of html) {
+    assert.ok(!/<script>(?!<\/script>)|<script(?![^>]*\bsrc=)[^>]*>/.test(f.body), `${f.path} has inline script`);
+    assert.ok(!/\sstyle="/.test(f.body), `${f.path} has an inline style`);
+    assert.ok(!/\son[a-z]+="/.test(f.body), `${f.path} has an inline handler`);
+    for (const m of f.body.matchAll(/href="([^"#]+)/g)) {
+      if (/^https?:/.test(m[1])) continue;
+      const target = new URL(m[1], `http://x/${f.path}`).pathname.slice(1);
+      assert.ok(paths.includes(target), `${f.path} links to missing ${target}`);
+    }
+  }
+  const orders = result.files.find((f) => f.path === 'r/orders.html').body;
+  assert.match(orders, /https:\/\/api\.shop\.test\/v1\/orders/, 'samples use the public base URL');
+  assert.ok(!orders.includes('paid_at</code></td>'), 'an omitted field is left out');
+  assert.ok(!orders.includes('class="ai"') && !orders.includes('class="gap"'), 'review marks stay out of published pages');
+  assert.ok(result.previewFiles.find((f) => f.path === 'r/orders.html').body.includes('class="gap"'));
+  const all = result.files.map((f) => f.body).join('\n');
+  assert.ok(!all.includes('ada@acme.io') && !all.includes('hunter2hunter2'));
+  assert.deepEqual(result.secretHits, []);
+  assert.ok(result.changelog.some((l) => l.includes('Added `POST /v1/orders`')), result.changelog.join('\n'));
+  assert.ok(result.changelog.some((l) => l.includes('`amount` changed from string to integer')), result.changelog.join('\n'));
+  assert.match(result.files.find((f) => f.path === 'changelog.html').body, /Older change/);
+  const api = JSON.parse(result.files.find((f) => f.path === 'openapi.json').body);
+  assert.equal(api.openapi, '3.1.0');
+  assert.deepEqual(api.servers, [{ url: 'https://api.shop.test' }]);
+  assert.ok(api.paths['/v1/orders/{id}'].get.parameters.some((p) => p.name === 'id' && p.in === 'path' && p.required));
+  assert.equal(api.paths['/v1/orders'].post.responses['201'].content['application/json'].schema.properties.status.type, 'string');
+  assert.equal(api.components.securitySchemes.bearerAuth.scheme, 'bearer');
+  assert.match(result.files.find((f) => f.path === 'assets/site.css').body, /--accent: #123456/);
+  assert.match(result.files.find((f) => f.path === 'llms.txt').body, /^# Shop API\n\n> Orders and payments for the shop\./);
+  assert.ok(previewHtml(result.previewFiles, 'index.html').includes('<style>'));
+});
+
+test('markdown escapes HTML and only links http(s)', () => {
+  assert.equal(markdown('<script>x</script> **b** [ok](https://a.io) [no](javascript:alert(1))'), '<p>&lt;script&gt;x&lt;/script&gt; <strong>b</strong> <a href="https://a.io" rel="noopener">ok</a> [no](javascript:alert(1))</p>');
+  assert.deepEqual(schemaFrom([{ path: 'a.b', types: ['integer'], formats: [], values: [], nullable: true }, { path: 'list[].id', types: ['string'], formats: ['uuid'], values: [] }]), { type: 'object', properties: { a: { type: 'object', properties: { b: { type: ['integer', 'null'] } } }, list: { type: 'array', items: { type: 'object', properties: { id: { type: 'string', format: 'uuid' } } } } } });
+});
+
+test('zip export writes a readable archive', () => {
+  const bytes = zip([{ path: 'index.html', body: 'hi' }, { path: 'r/a.html', body: 'é' }], 'site');
+  assert.equal(new DataView(bytes.buffer).getUint32(0, true), 0x04034b50);
+  assert.equal(crc32(new TextEncoder().encode('hi')), 0xd8932aac);
+  const text = new TextDecoder().decode(bytes);
+  assert.ok(text.includes('site/index.html') && text.includes('site/r/a.html'));
+});

@@ -74,6 +74,51 @@ const MOCK_AI = {
   compatible: { label: 'OpenAI-compatible', key: false, base: '', models: [{ id: 'meta-llama/llama-3.3-70b-instruct' }] },
 };
 
+// Browser preview of a Dispatch server's documentation sites, kept in localStorage.
+function mockDocs(method, p, qs, body) {
+  const db = read('mockdocs') || { sites: [], versions: {}, files: {} };
+  const save = () => write('mockdocs', db);
+  const now = () => new Date().toISOString();
+  const find = (id) => { const s = db.sites.find((x) => x.id === id); if (!s) throw 'Dispatch server returned 404: No such documentation site'; return s; };
+  const view = (s) => ({ ...s, live: !!s.online && s.domain_status === 'verified' && s.current_version != null, url: s.hostname ? `https://${s.hostname}/` : null });
+  let m;
+  if (method === 'GET' && p === '/docs-sites') { const col = new URLSearchParams(qs || '').get('collection'); return { sites: db.sites.filter((s) => !col || s.collection_uid === col).map(view) }; }
+  if (method === 'POST' && p === '/admin/docs-sites') {
+    if (db.sites.some((s) => s.collection_uid === body.collection_uid)) throw 'Dispatch server returned 409: This collection already has a documentation site';
+    const s = { id: `site-${Date.now()}`, workspace_id: body.workspace_id, collection_uid: body.collection_uid, name: body.name, hostname: null, domain_status: 'none', verify_token: null, check_message: null, online: false, current_version: null, created_at: now(), updated_at: now() };
+    db.sites.push(s); save(); return view(s);
+  }
+  if ((m = p.match(/^\/admin\/docs-sites\/([^/]+)\/verify$/))) {
+    const s = find(m[1]);
+    if (/\.invalid$/.test(s.hostname)) { s.domain_status = 'failed'; s.check_message = `Not verified: couldn't connect to https://${s.hostname}/.well-known/dispatch-docs/${s.verify_token}. Check the DNS record and that HTTPS is set up for the domain, and there's no TXT record _dispatch-docs.${s.hostname} with the token.`; }
+    else { s.domain_status = 'verified'; s.check_message = null; }
+    save(); return view(s);
+  }
+  if ((m = p.match(/^\/admin\/docs-sites\/([^/]+)$/)) && method === 'PATCH') {
+    const s = find(m[1]);
+    if ('hostname' in body && body.hostname !== s.hostname) { s.hostname = body.hostname || null; s.domain_status = s.hostname ? 'pending' : 'none'; s.verify_token = s.hostname ? Math.random().toString(16).slice(2).padEnd(32, '0') : null; s.online = false; }
+    if ('online' in body) { if (body.online && s.domain_status !== 'verified') throw 'Dispatch server returned 400: Add and verify a domain before putting the site online'; s.online = !!body.online; }
+    save(); return view(s);
+  }
+  if ((m = p.match(/^\/docs-sites\/([^/]+)\/versions$/))) {
+    const s = find(m[1]);
+    const list = db.versions[s.id] || [];
+    if (method === 'GET') return { versions: [...list].reverse().map((v) => ({ ...v, current: v.version === s.current_version })) };
+    const v = { version: list.length + 1, published_by: 'demo@example.com', published_at: now(), changelog: body.changelog || '', file_count: body.files.length, total_bytes: body.files.reduce((n, f) => n + f.body.length, 0) };
+    (db.versions[s.id] = list).push(v);
+    db.files[`${s.id}/${v.version}`] = Object.fromEntries(body.files.filter((f) => f.path.startsWith('_dispatch/')).map((f) => [f.path, f.body]));
+    s.current_version = v.version; save();
+    return { version: v.version, site: view(s) };
+  }
+  if ((m = p.match(/^\/docs-sites\/([^/]+)\/versions\/(\d+)\/files\/(.+)$/))) {
+    const text = db.files[`${m[1]}/${m[2]}`]?.[m[3]];
+    if (!text) throw 'Dispatch server returned 404: No such file in that version';
+    return JSON.parse(text);
+  }
+  if ((m = p.match(/^\/docs-sites\/([^/]+)$/)) && method === 'PATCH') { const s = find(m[1]); s.current_version = body.current_version; save(); return view(s); }
+  throw `Dispatch server returned 404: ${p}`;
+}
+
 export const mockBridge = {
   async send(req) {
     await delay(350);
@@ -190,6 +235,8 @@ export const mockBridge = {
     const [p, qs] = path.split('?');
     const ws = new URLSearchParams(qs || '').get('workspace');
     let m;
+    if (mockCtx.server && (p.startsWith('/docs-sites') || p.startsWith('/admin/docs-sites'))) return mockDocs(method, p, qs, body);
+    if (mockCtx.server && p === '/me') return { user: { id: 1, username: 'demo', fullName: 'Demo User', email: 'demo@example.com', role: globalThis.__mockRole || 'admin' } };
     if (method === 'GET') {
       const hit = cloud[path];
       if (!hit) throw `Postman returned 404: not found (${path})`;
