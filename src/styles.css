@@ -1,4 +1,4 @@
-/* Text colours (--text-3, --ok, --warn, --err, --info, --accent-ink) meet WCAG AA (4.5:1) on every surface,
+/* Text colours (--text-3, --ok, --warn, --err, --info, --accent-ink, the --m-* method colours) meet WCAG AA (4.5:1) on every surface,
    in light and dark. The admin panel (server/admin, worker/admin) uses the same values. */
 :root {
   --bg: #f6f6f4;
@@ -25,12 +25,12 @@
   --var-ok-bg: rgba(31, 138, 76, 0.1);
   --var-bad: #d23f3f;
   --var-bad-bg: rgba(210, 63, 63, 0.1);
-  --m-get: #1f8a4c;
-  --m-post: #b7791f;
-  --m-put: #2f6fd6;
-  --m-patch: #8a4fd1;
-  --m-delete: #d23f3f;
-  --m-other: #6b6f78;
+  --m-get: #006d37;
+  --m-post: #885600;
+  --m-put: #1c5cc2;
+  --m-patch: #7b3fc0;
+  --m-delete: #b9242a;
+  --m-other: #5d616a;
   --code-key: #9a3e9e;
   --code-str: #1f7a4a;
   --code-num: #2f6fd6;
@@ -73,7 +73,7 @@
     --m-post: #e0a84a;
     --m-put: #6aa3ff;
     --m-patch: #b48cff;
-    --m-delete: #f06b6b;
+    --m-delete: #f77171;
     --m-other: #9a9da5;
     --code-key: #d59ae0;
     --code-str: #8fd19e;
@@ -93,7 +93,7 @@
   --accent: #7fd6a4; --accent-ink: #7fd6a4; --accent-soft: rgba(127,214,164,.16); --accent-text: #0d3725; --focus: rgba(127,214,164,.45);
   --ok: #4cc27f; --warn: #e0a84a; --err: #f06b6b; --info: #6aa3ff;
   --var-ok: #4cc27f; --var-ok-bg: rgba(76,194,127,.14); --var-bad: #f06b6b; --var-bad-bg: rgba(240,107,107,.14);
-  --m-get: #4cc27f; --m-post: #e0a84a; --m-put: #6aa3ff; --m-patch: #b48cff; --m-delete: #f06b6b; --m-other: #9a9da5;
+  --m-get: #4cc27f; --m-post: #e0a84a; --m-put: #6aa3ff; --m-patch: #b48cff; --m-delete: #f77171; --m-other: #9a9da5;
   --code-key: #d59ae0; --code-str: #8fd19e; --code-num: #86b8ff; --code-bool: #f0a66b; --code-null: #7c7f87;
   --shadow: 0 10px 40px rgba(0,0,0,.5), 0 1px 3px rgba(0,0,0,.4);
   color-scheme: dark;
