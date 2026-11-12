@@ -1,5 +1,5 @@
-// The AI assistant's prompts and parsing. What goes to Anthropic is the request
-// as written ({{variables}} unresolved, so environment secrets stay out), with
+// The AI assistant's prompts and parsing. What goes to the chosen model provider
+// is the request as written ({{variables}} unresolved, so environment secrets stay out), with
 // credential-looking header values redacted and bodies capped.
 
 import { urlObject, parseUrl, uuid, getScript } from './model.js';
@@ -82,3 +82,65 @@ export function requestFromAi(json) {
   if (o.description) request.description = o.description;
   return { id: uuid(), name: o.name || 'New request', request, response: [] };
 }
+
+/** The providers the assistant can use, in the order Settings lists them. */
+export const PROVIDERS = [
+  { id: 'anthropic', label: 'Anthropic', key: 'required', keyHint: 'sk-ant-…', keyUrl: 'https://console.anthropic.com/settings/keys' },
+  { id: 'openai', label: 'OpenAI', key: 'required', keyHint: 'sk-…', keyUrl: 'https://platform.openai.com/api-keys' },
+  { id: 'ollama', label: 'Ollama', key: 'none', base: 'http://localhost:11434', blurb: 'Runs models on this machine or one you host. Install it from ollama.com and pull a model first.' },
+  { id: 'ollama-cloud', label: 'Ollama Cloud', key: 'required', keyUrl: 'https://ollama.com/settings/keys' },
+  { id: 'compatible', label: 'OpenAI-compatible', key: 'optional', base: '', basePlaceholder: 'https://openrouter.ai/api/v1', blurb: 'Any server with OpenAI\'s /models and /chat/completions routes, such as OpenRouter, Groq, LM Studio or vLLM. The address usually ends in /v1.' },
+];
+
+export const providerLabel = (id) => PROVIDERS.find((p) => p.id === id)?.label || id;
+
+/**
+ * The model to use: the saved choice if its provider is still connected and
+ * still lists it, otherwise the first model of the first connected provider.
+ */
+export function chooseModel(choice, providers = []) {
+  const ok = (p, m) => p?.models?.some((x) => x.id === m);
+  if (choice?.provider) {
+    const p = providers.find((x) => x.id === choice.provider);
+    if (ok(p, choice.model)) return { provider: p.id, model: choice.model };
+  }
+  for (const p of providers) if (p.models?.length) return { provider: p.id, model: p.models[0].id };
+  return null;
+}
+
+/**
+ * Checks a parsed value against the subset of JSON Schema the assistant uses
+ * (type, properties, required, additionalProperties, items, enum). Returns a
+ * list of problems; empty means it fits.
+ */
+export function checkSchema(value, schema, path = '$') {
+  const errs = [];
+  if (!schema || typeof schema !== 'object') return errs;
+  const types = [].concat(schema.type || []);
+  const typeOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v);
+  const fits = (t) => typeOf(value) === t || (t === 'number' && typeOf(value) === 'integer');
+  if (types.length && !types.some(fits)) return [`${path} should be ${types.join(' or ')}, not ${typeOf(value)}`];
+  if (schema.enum && !schema.enum.includes(value)) errs.push(`${path} should be one of ${schema.enum.map((x) => JSON.stringify(x)).join(', ')}`);
+  if (typeOf(value) === 'object') {
+    for (const k of schema.required || []) if (!(k in value)) errs.push(`${path}.${k} is missing`);
+    for (const [k, v] of Object.entries(value)) {
+      if (schema.properties?.[k]) errs.push(...checkSchema(v, schema.properties[k], `${path}.${k}`));
+      else if (schema.additionalProperties === false) errs.push(`${path}.${k} isn't allowed`);
+    }
+  }
+  if (typeOf(value) === 'array' && schema.items) value.forEach((v, i) => errs.push(...checkSchema(v, schema.items, `${path}[${i}]`)));
+  return errs;
+}
+
+/** Parses a structured answer (tolerating a ```json fence) and checks it; throws with the problems. */
+export function parseStructured(text, schema) {
+  let value;
+  const body = String(text || '').trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1');
+  try { value = JSON.parse(body); } catch { throw new Error('The answer wasn\'t valid JSON.'); }
+  const errs = checkSchema(value, schema);
+  if (errs.length) throw new Error(`The answer didn't match the expected shape: ${errs.slice(0, 5).join('; ')}`);
+  return value;
+}
+
+/** The prompt for a second try after a structured answer didn't fit. */
+export const retryPrompt = (prompt, problem) => `${prompt}\n\nYour previous answer couldn't be used: ${problem} Reply again with only the JSON object.`;

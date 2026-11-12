@@ -65,6 +65,15 @@ const mockCookies = [
   { domain: 'example.com', hostOnly: false, path: '/', name: 'theme', value: 'dark', expires: Math.floor(Date.now() / 1000) + 86400 * 30, secure: false, httpOnly: false, sameSite: null },
 ];
 
+// Browser preview: what each AI provider "returns" when connected.
+const MOCK_AI = {
+  anthropic: { label: 'Anthropic', key: true, prefix: 'sk-ant-', base: 'https://api.anthropic.com/v1', models: [{ id: 'claude-opus-5', name: 'Claude Opus 5' }, { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5' }, { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5' }] },
+  openai: { label: 'OpenAI', key: true, prefix: 'sk-', base: 'https://api.openai.com/v1', models: [{ id: 'gpt-5' }, { id: 'gpt-5-mini' }] },
+  ollama: { label: 'Ollama', key: false, base: 'http://localhost:11434', models: [{ id: 'llama3.2:latest', detail: '3.2B · Q4_K_M · 2.0 GB' }, { id: 'qwen3:14b', detail: '14.8B · Q4_K_M · 9.3 GB' }] },
+  'ollama-cloud': { label: 'Ollama Cloud', key: true, base: 'https://ollama.com', models: [{ id: 'gpt-oss:120b', detail: '116.8B' }] },
+  compatible: { label: 'OpenAI-compatible', key: false, base: '', models: [{ id: 'meta-llama/llama-3.3-70b-instruct' }] },
+};
+
 export const mockBridge = {
   async send(req) {
     await delay(350);
@@ -117,13 +126,32 @@ export const mockBridge = {
   },
   async pickProtoFiles() { return ['/Users/you/protos/shop.proto']; },
   // Browser preview: canned answers so the assistant UI can be exercised offline.
-  async aiSetKey(key) { if (!String(key).startsWith('sk-ant-')) throw 'Anthropic rejected the API key. Check it under Settings → AI assistant.'; write('ai-key', '1'); },
-  async aiHasKey() { return !!read('ai-key'); },
-  async aiDeleteKey() { ls.removeItem('dispatch:ai-key'); },
+  async aiProviders() { return read('ai-providers') || []; },
+  async aiConnect(provider, key, baseUrl) {
+    const meta = MOCK_AI[provider];
+    if (!meta) throw `Unknown provider ${provider}`;
+    const old = (read('ai-providers') || []).find((p) => p.id === provider);
+    const base = (baseUrl || meta.base || '').replace(/\/+$/, '');
+    if (!base) throw "Enter the server's address, such as https://openrouter.ai/api/v1.";
+    // Like the Rust side: a saved key is only reused at the address it was saved for.
+    const keep = !key && old?.hasKey && old.baseUrl === base;
+    if (meta.key && !key && !keep) throw `Paste your ${meta.label} API key.`;
+    if (key && meta.prefix && !String(key).startsWith(meta.prefix)) throw `${meta.label} rejected the API key. Check it under Settings → AI assistant.`;
+    const state = { id: provider, label: meta.label, baseUrl: base, hasKey: !!(key || keep), local: /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(base), models: meta.models, fetchedAt: Math.floor(Date.now() / 1000) };
+    write('ai-providers', [...(read('ai-providers') || []).filter((p) => p.id !== provider), state].sort((a, b) => Object.keys(MOCK_AI).indexOf(a.id) - Object.keys(MOCK_AI).indexOf(b.id)));
+    return state;
+  },
+  async aiRefreshModels(provider) {
+    const state = (read('ai-providers') || []).find((p) => p.id === provider);
+    if (!state) throw `${MOCK_AI[provider]?.label || provider} isn't connected.`;
+    await delay(300);
+    return mockBridge.aiConnect(provider, null, state.baseUrl);
+  },
+  async aiDisconnect(provider) { write('ai-providers', (read('ai-providers') || []).filter((p) => p.id !== provider)); },
   async aiAsk(request, id, onEvent) {
     const text = globalThis.__mockAiAnswer?.(request) ?? (request.schema ? JSON.stringify({ name: 'List users', method: 'GET', url: '{{baseUrl}}/users?page=1', headers: [{ key: 'Accept', value: 'application/json' }], bodyMode: 'none', body: '', description: 'Lists users, paginated.' }) : "```javascript\npm.test('Status is 200', () => pm.response.to.have.status(200));\n```");
     for (const part of text.match(/[\s\S]{1,12}/g) || []) { await delay(15); onEvent({ type: 'text', text: part }); }
-    return { text, model: 'claude-opus-5', stopReason: 'end_turn', inputTokens: 100, outputTokens: 40 };
+    return { text, model: request.model || 'claude-opus-5', stopReason: 'end_turn', inputTokens: 100, outputTokens: 40 };
   },
   async clearCookies() { mockCookies.length = 0; },
   // Browser preview: no real server, but requests to it can be simulated through __mockServe.

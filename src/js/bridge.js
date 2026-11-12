@@ -40,9 +40,10 @@ export const bridge = isDesktop
         return invoke('grpc_call', { source, method, message, onMessage: ch });
       },
       pickProtoFiles: () => invoke('pick_proto_files'),
-      aiSetKey: (key) => invoke('ai_set_key', { key }),
-      aiHasKey: () => invoke('ai_has_key'),
-      aiDeleteKey: () => invoke('ai_delete_key'),
+      aiProviders: () => invoke('ai_providers'),
+      aiConnect: (provider, key, baseUrl) => invoke('ai_connect', { provider, key: key ?? null, baseUrl: baseUrl ?? null }),
+      aiRefreshModels: (provider) => invoke('ai_refresh_models', { provider }),
+      aiDisconnect: (provider) => invoke('ai_disconnect', { provider }),
       aiAsk: (request, id, onEvent) => {
         const ch = new tauri.Channel();
         ch.onmessage = onEvent;
