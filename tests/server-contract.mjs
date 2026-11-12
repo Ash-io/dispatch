@@ -540,6 +540,116 @@ await check('only admins manage Dispatch workspaces', async () => {
   assert.equal(renamed.data.name, 'Renamed');
 });
 
+// Published documentation. Needs DOCS_ALLOW_HTTP=true on the server, so the
+// docs domain can be localhost:<port> while the API is 127.0.0.1:<port>.
+const apiUrl = new URL(BASE);
+const DOCS_HOST = `localhost:${apiUrl.port}`;
+function hostGet(host, path, { method = 'GET', token } = {}) {
+  return new Promise((resolve, reject) => {
+    const headers = { Host: host };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const req = http.request({ host: apiUrl.hostname, port: apiUrl.port, path, method, headers }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+const page = (title) => ({ path: 'index.html', content_type: 'text/html; charset=utf-8', body: `<!doctype html><title>${title}</title><h1>${title}</h1>` });
+let site = null;
+
+await check('only admins create documentation sites, one per collection', async () => {
+  for (const token of [viewer.token, editor.token, creatorAll.token]) {
+    assert.equal((await call('POST', '/admin/docs-sites', { token, body: { workspace_id: solo, collection_uid: 'docs-col', name: 'x' } })).status, 403);
+  }
+  const made = await call('POST', '/admin/docs-sites', { token: admin, body: { workspace_id: solo, collection_uid: 'docs-col', name: 'Orders API' } });
+  assert.equal(made.status, 201, made.text);
+  assert.equal(made.data.domain_status, 'none');
+  assert.equal(made.data.live, false);
+  site = made.data.id;
+  assert.equal((await call('POST', '/admin/docs-sites', { token: admin, body: { workspace_id: solo, collection_uid: 'docs-col', name: 'Again' } })).status, 409);
+  const listed = await call('GET', '/docs-sites?collection=docs-col', { token: creatorAll.token });
+  assert.deepEqual(listed.data.sites.map((s) => s.id), [site]);
+  assert.ok(!('verify_token' in listed.data.sites[0]), 'only admins see the verification token');
+  assert.deepEqual((await call('GET', '/docs-sites', { token: editor.token })).data.sites, [], 'no grant, no site');
+});
+
+await check('publishing needs editor role and access to the workspace, and checks every file', async () => {
+  assert.equal((await call('POST', `/docs-sites/${site}/versions`, { token: editor.token, body: { files: [page('x')] } })).status, 403, 'no grant');
+  const bad = async (files) => (await call('POST', `/docs-sites/${site}/versions`, { token: creatorAll.token, body: { files } })).status;
+  assert.equal(await bad([page('x'), { path: '../etc', content_type: 'text/plain; charset=utf-8', body: 'x' }]), 400);
+  assert.equal(await bad([{ path: 'other.html', content_type: 'text/html; charset=utf-8', body: 'x' }]), 400, 'needs an index.html');
+  assert.equal(await bad([{ ...page('x'), content_type: 'application/octet-stream' }]), 400);
+  assert.equal(await bad([page('x'), page('y')]), 400, 'duplicate path');
+  const v1 = await call('POST', `/docs-sites/${site}/versions`, { token: creatorAll.token, body: { changelog: 'First', files: [page('Version one'), { path: 'r/orders.html', content_type: 'text/html; charset=utf-8', body: '<h1>Orders</h1>' }, { path: 'assets/site.css', content_type: 'text/css; charset=utf-8', body: 'h1{color:red}' }] } });
+  assert.equal(v1.status, 201, v1.text);
+  assert.equal(v1.data.version, 1);
+  const v2 = await call('POST', `/docs-sites/${site}/versions`, { token: admin, body: { files: [page('Version two')] } });
+  assert.equal(v2.data.version, 2);
+  const versions = await call('GET', `/docs-sites/${site}/versions`, { token: creatorAll.token });
+  assert.deepEqual(versions.data.versions.map((v) => [v.version, v.current, v.file_count]), [[2, true, 1], [1, false, 3]]);
+  const preview = await call('GET', `/docs-sites/${site}/versions/1/files/r/orders.html`, { token: creatorAll.token });
+  assert.equal(preview.status, 200);
+  assert.match(preview.text, /Orders/);
+  assert.equal((await call('PATCH', `/docs-sites/${site}`, { token: creatorAll.token, body: { current_version: 1 } })).data.current_version, 1);
+  assert.equal((await call('PATCH', `/docs-sites/${site}`, { token: creatorAll.token, body: { current_version: 9 } })).status, 404);
+});
+
+await check('a documentation site is only reachable on its verified domain, and that domain never reaches the API', async () => {
+  const own = await call('PATCH', `/admin/docs-sites/${site}`, { token: admin, body: { hostname: apiUrl.host } });
+  assert.equal(own.status, 400, 'the API host itself is refused');
+  assert.equal((await call('PATCH', `/admin/docs-sites/${site}`, { token: admin, body: { hostname: 'not a domain' } })).status, 400);
+  const set = await call('PATCH', `/admin/docs-sites/${site}`, { token: admin, body: { hostname: DOCS_HOST } });
+  assert.equal(set.status, 200, set.text);
+  assert.equal(set.data.domain_status, 'pending');
+  assert.ok(set.data.verify_token);
+  const early = await hostGet(DOCS_HOST, '/');
+  assert.equal(early.status, 404);
+  assert.match(early.text, /isn't published yet/);
+  const api = await hostGet(DOCS_HOST, '/workspaces', { token: admin });
+  assert.equal(api.status, 404, 'the API is not on the docs domain');
+  assert.ok(!api.text.includes('"workspaces"'));
+  assert.equal((await hostGet(DOCS_HOST, '/admin/')).status, 404, 'nor is the admin panel');
+  assert.equal((await hostGet(DOCS_HOST, `/.well-known/dispatch-docs/${set.data.verify_token}`)).text, set.data.verify_token);
+  assert.equal((await hostGet(DOCS_HOST, '/.well-known/dispatch-docs/wrong')).status, 404);
+  assert.equal((await call('PATCH', `/admin/docs-sites/${site}`, { token: admin, body: { online: true } })).status, 400, 'not verified yet');
+  assert.equal((await call('POST', `/admin/docs-sites/${site}/verify`, { token: creatorAll.token })).status, 403);
+  const verified = await call('POST', `/admin/docs-sites/${site}/verify`, { token: admin });
+  assert.equal(verified.status, 200, verified.text);
+  assert.equal(verified.data.domain_status, 'verified', verified.data.check_message);
+  const live = await call('PATCH', `/admin/docs-sites/${site}`, { token: admin, body: { online: true } });
+  assert.equal(live.data.live, true);
+  const home = await hostGet(DOCS_HOST, '/');
+  assert.equal(home.status, 200);
+  assert.match(home.text, /Version one/);
+  assert.match(home.headers['content-security-policy'], /default-src 'none'/);
+  assert.equal(home.headers['x-content-type-options'], 'nosniff');
+  assert.match((await hostGet(DOCS_HOST, '/r/orders')).text, /Orders/, 'pages answer without .html');
+  assert.equal((await hostGet(DOCS_HOST, '/assets/site.css')).headers['content-type'], 'text/css; charset=utf-8');
+  assert.equal((await hostGet(DOCS_HOST, '/missing')).status, 404);
+  assert.equal((await hostGet(DOCS_HOST, '/', { method: 'POST' })).status, 405);
+  await call('PATCH', `/docs-sites/${site}`, { token: creatorAll.token, body: { current_version: 2 } });
+  assert.match((await hostGet(DOCS_HOST, '/')).text, /Version two/, 'the current version is what is served');
+  assert.equal((await call('GET', '/docs-sites', { token: admin })).status, 200, 'the API host still works');
+  await call('PATCH', `/admin/docs-sites/${site}`, { token: admin, body: { online: false } });
+  assert.equal((await hostGet(DOCS_HOST, '/')).status, 404, 'offline means not served');
+  const audit = await call('GET', '/admin/audit?limit=200', { token: admin });
+  for (const action of ['docs_site_create', 'docs_publish', 'docs_rollback', 'docs_domain_verify', 'docs_site_update']) {
+    assert.ok(audit.data.some((row) => row.action === action), `audit has ${action}`);
+  }
+});
+
+await check('deleting a site frees its domain and collection', async () => {
+  assert.equal((await call('DELETE', `/admin/docs-sites/${site}`, { token: creatorAll.token })).status, 403);
+  assert.equal((await call('DELETE', `/admin/docs-sites/${site}`, { token: admin })).status, 204);
+  assert.equal((await hostGet(DOCS_HOST, '/workspaces', { token: admin })).status, 200, 'the host is the API again');
+  const again = await call('POST', '/admin/docs-sites', { token: admin, body: { workspace_id: solo, collection_uid: 'docs-col', name: 'Orders API' } });
+  assert.equal(again.status, 201);
+  await call('DELETE', `/admin/docs-sites/${again.data.id}`, { token: admin });
+});
+
 await check('the admin panel is still served', async () => {
   const r = await fetch(`${BASE}/admin/`);
   assert.equal(r.status, 200);

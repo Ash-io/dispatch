@@ -47,6 +47,7 @@ Render: use the **Deploy to Render** button in the top-level README — [`render
 | `POSTMAN_API_KEY` | — | Optional. One more Postman key, set here instead of in the panel. Shows in the panel as managed by the server. |
 | `POSTMAN_REGION` | `us` | The region of `POSTMAN_API_KEY`: `us` or `eu`. Keys added in the panel pick their own. |
 | `POSTMAN_API_BASE` | — | Override the Postman base URL (useful for tests). |
+| `DOCS_ALLOW_HTTP` | — | `true` lets documentation domains be plain http with a port, for local tests only. Never set it in production. See [published documentation](../docs/published-docs.md). |
 | `LISTEN_ADDR` | `127.0.0.1:8383` | Address to bind. |
 | `DB_PATH` | `./dispatch-server.db` | SQLite database (users, tokens, settings, encrypted Postman keys, audit log). |
 | `REQUIRE_AUTH` | `true` | Enforce accounts (register/login). With `false` the proxy is open to anyone who can reach it — bind accordingly. |

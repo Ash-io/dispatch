@@ -77,6 +77,43 @@ CREATE TABLE IF NOT EXISTS dispatch_items (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS dispatch_items_workspace ON dispatch_items (workspace_id, kind);
+-- Published documentation: one site per collection, served only on its
+-- verified domain. Every publish is a version; files hold its pages.
+CREATE TABLE IF NOT EXISTS docs_sites (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    collection_uid TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    hostname TEXT UNIQUE,
+    domain_status TEXT NOT NULL DEFAULT 'none',
+    verify_token TEXT,
+    verified_at TEXT,
+    checked_at TEXT,
+    check_message TEXT,
+    online INTEGER NOT NULL DEFAULT 0,
+    current_version INTEGER,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS docs_versions (
+    site_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    published_by TEXT,
+    published_at TEXT NOT NULL,
+    changelog TEXT NOT NULL DEFAULT '',
+    file_count INTEGER NOT NULL DEFAULT 0,
+    total_bytes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (site_id, version)
+);
+CREATE TABLE IF NOT EXISTS docs_files (
+    site_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    body TEXT NOT NULL,
+    PRIMARY KEY (site_id, version, path)
+);
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,

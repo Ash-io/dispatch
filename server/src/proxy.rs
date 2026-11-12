@@ -99,22 +99,22 @@ struct Who {
     email: Option<String>,
 }
 
-struct Principal {
-    user_id: Option<i64>,
-    email: Option<String>,
-    role: String,
+pub(crate) struct Principal {
+    pub(crate) user_id: Option<i64>,
+    pub(crate) email: Option<String>,
+    pub(crate) role: String,
     /// None = all workspaces; Some = only these workspace IDs.
-    grants: Option<Vec<String>>,
+    pub(crate) grants: Option<Vec<String>>,
 }
 
 impl Principal {
-    fn rank(&self) -> u8 {
+    pub(crate) fn rank(&self) -> u8 {
         rank(&self.role)
     }
 
     /// Admins and NULL-grant principals bypass scoping entirely; a granted
     /// principal may only touch workspaces in its list.
-    fn scope(&self) -> Option<&[String]> {
+    pub(crate) fn scope(&self) -> Option<&[String]> {
         if self.role == "admin" || self.grants.is_none() {
             None
         } else {
@@ -126,7 +126,7 @@ impl Principal {
 /// Enforced mode always requires a valid Bearer token. Open mode treats every
 /// request as an implicit editor with no grants, unless the caller happens to
 /// present a valid token (e.g. the admin principal from /auth/admin-login).
-fn resolve_principal(state: &AppState, authorization: Option<&str>) -> Result<Principal, Response> {
+pub(crate) fn resolve_principal(state: &AppState, authorization: Option<&str>) -> Result<Principal, Response> {
     let token = authorization.and_then(extract_bearer);
     let principal_from = |user: Option<crate::auth::AuthUser>| user.map(|auth_user| Principal {
         user_id: Some(auth_user.user_id),

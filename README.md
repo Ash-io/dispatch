@@ -169,6 +169,7 @@ src/                 The interface (plain HTML, CSS and JavaScript modules; no b
   js/ui/             Sidebar, request editor, panels and shared components
   js/ui/codeedit.js  JSON editor and response viewer, built on CodeMirror
   js/jsonc.js        JSON with comments and {{variables}}: problems, formatting, suggestions
+  js/docgen/         Published documentation: scrubbing, facts, AI writing and the static site (docs/published-docs.md)
   vendor/            Bundled libraries, including chai, crypto-js, lodash and CodeMirror (MIT licensed)
 src-tauri/           The native shell in Rust
   src/http.rs        Sends requests

@@ -10,6 +10,7 @@ mod admin;
 mod auth;
 mod config;
 mod db;
+mod docs;
 mod hosted;
 mod proxy;
 
@@ -106,6 +107,13 @@ pub fn router(state: std::sync::Arc<AppState>) -> Router {
         .route("/admin/dispatch-workspaces/{id}", patch(admin::dispatch_update).delete(admin::dispatch_delete))
         .route("/admin/settings", get(admin::settings_get).patch(admin::settings_patch))
         .route("/admin/audit", get(admin::audit_list))
+        .route("/admin/docs-sites", post(docs::create))
+        .route("/admin/docs-sites/{id}", patch(docs::update).delete(docs::delete))
+        .route("/admin/docs-sites/{id}/verify", post(docs::verify))
+        .route("/docs-sites", get(docs::list))
+        .route("/docs-sites/{id}", patch(docs::set_current))
+        .route("/docs-sites/{id}/versions", get(docs::versions).post(docs::publish))
+        .route("/docs-sites/{id}/versions/{version}/files/{*path}", get(docs::preview))
         .route("/admin", get(admin::panel_redirect))
         .route("/admin/", get(admin::panel_index))
         .route("/admin/{*path}", get(admin::panel_file))
@@ -113,6 +121,8 @@ pub fn router(state: std::sync::Arc<AppState>) -> Router {
         .method_not_allowed_fallback(method_not_allowed)
         .layer(CorsLayer::permissive())
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        // Outermost, so a documentation domain never reaches the API or the admin panel.
+        .layer(axum::middleware::from_fn_with_state(state.clone(), docs::host_layer))
         .with_state(state)
 }
 

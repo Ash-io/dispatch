@@ -25,6 +25,9 @@ pub struct Config {
     /// Only meaningful when `require_auth` is false: the env-provided admin
     /// password, or a fresh random one that was printed at boot.
     pub admin_password: Option<String>,
+    /// DOCS_ALLOW_HTTP=true: documentation domains may be plain http and carry
+    /// a port, and verification fetches over http. For local testing only.
+    pub docs_allow_http: bool,
 }
 
 impl Config {
@@ -84,7 +87,10 @@ impl Config {
             }
         };
 
+        let docs_allow_http = env::var("DOCS_ALLOW_HTTP").is_ok_and(|v| v == "true");
+
         Ok(Config {
+            docs_allow_http,
             postman_api_key,
             postman_region,
             postman_base_override,

@@ -24,7 +24,10 @@
     meEmail: $("me-email"),
     meAvatar: $("me-avatar"),
     tabs: Array.from(document.querySelectorAll(".tab")),
-    panels: { accounts: $("tab-accounts"), workspaces: $("tab-workspaces"), users: $("tab-users"), settings: $("tab-settings"), audit: $("tab-audit") },
+    panels: { accounts: $("tab-accounts"), workspaces: $("tab-workspaces"), users: $("tab-users"), docs: $("tab-docs"), settings: $("tab-settings"), audit: $("tab-audit") },
+    docsBody: $("docs-body"),
+    docsCount: $("docs-count"),
+    docsRefresh: $("docs-refresh"),
     accountsCount: $("accounts-count"),
     accountsBody: $("accounts-body"),
     accountsTable: $("accounts-table"),
@@ -320,6 +323,7 @@
     if (name === "accounts") loadAccounts();
     else if (name === "workspaces") { loadUsers(); loadWorkspaces(); }
     else if (name === "users") loadUsers();
+    else if (name === "docs") loadDocs();
     else if (name === "settings") loadSettings();
     else if (name === "audit") loadAudit();
   }
@@ -1153,6 +1157,112 @@
   });
 
   els.usersRefresh.addEventListener("click", () => { loadUsers(); loadWorkspaces(); });
+
+  /* ---- documentation sites ---- */
+
+  const DOCS_STATUS = { none: "No domain", pending: "Not verified", verified: "Verified", failed: "Verification failed" };
+
+  async function loadDocs() {
+    skeletonRows(els.docsBody, 4);
+    const result = await api("/docs-sites");
+    if (!result.ok) {
+      if (result.status !== 401) { statusRow(els.docsBody, 4, "Couldn't load documentation sites."); fail(result); }
+      return;
+    }
+    renderDocs((result.data && result.data.sites) || []);
+  }
+
+  function renderDocs(sites) {
+    els.docsBody.textContent = "";
+    els.docsCount.textContent = sites.length ? String(sites.length) : "";
+    if (!sites.length) {
+      statusRow(els.docsBody, 4, "No documentation sites yet. Create one from a collection in the Dispatch app.");
+      return;
+    }
+    for (const site of sites) {
+      const row = el("tr");
+      const name = labeledCell("Site");
+      const wrap = el("span");
+      wrap.appendChild(el("span", "acc-name", site.name));
+      wrap.appendChild(el("span", "acc-sub", site.current_version ? "Version " + site.current_version : "Nothing published yet"));
+      name.appendChild(wrap);
+      row.appendChild(name);
+
+      const domain = labeledCell("Domain", "mono", site.hostname || "—");
+      if (site.hostname && site.domain_status !== "verified" && site.verify_token) {
+        domain.appendChild(el("span", "acc-sub", "TXT _dispatch-docs." + site.hostname.split(":")[0] + " = " + site.verify_token));
+      }
+      row.appendChild(domain);
+
+      const status = labeledCell("Status");
+      status.appendChild(el("span", "pill" + (site.live ? " pill-server" : ""), site.live ? "Live" : DOCS_STATUS[site.domain_status] || site.domain_status));
+      if (site.check_message) status.appendChild(el("span", "acc-sub", site.check_message));
+      row.appendChild(status);
+
+      const actions = labeledCell("Actions", "u-actions");
+      const buttons = el("div", "action-row");
+      const add = (label, cls, handler) => { const b = el("button", "btn sm" + (cls ? " " + cls : ""), label); b.type = "button"; b.addEventListener("click", handler); buttons.appendChild(b); return b; };
+      add(site.hostname ? "Change domain" : "Add domain", "", () => docsDomainDialog(site));
+      if (site.hostname) add("Verify", "", async (event) => {
+        event.target.disabled = true;
+        const result = await api("/admin/docs-sites/" + encodeURIComponent(site.id) + "/verify", { method: "POST" });
+        event.target.disabled = false;
+        if (!result.ok) { fail(result); return; }
+        if (result.data.domain_status === "verified") toastOk("Domain verified."); else toastErr(result.data.check_message || "Not verified yet.");
+        loadDocs();
+      });
+      if (site.domain_status === "verified" && site.current_version) add(site.online ? "Take offline" : "Go live", "", async () => {
+        const result = await api("/admin/docs-sites/" + encodeURIComponent(site.id), { method: "PATCH", body: { online: !site.online } });
+        if (!result.ok) { fail(result); return; }
+        toastOk(site.online ? "The site is offline." : "The site is live.");
+        loadDocs();
+      });
+      add("Delete", "danger-ghost", () => docsDeleteDialog(site));
+      actions.appendChild(buttons);
+      row.appendChild(actions);
+      els.docsBody.appendChild(row);
+    }
+  }
+
+  function docsDomainDialog(site) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = site.hostname || "";
+    input.placeholder = "docs.example.com";
+    input.spellcheck = false;
+    const label = field("Domain or subdomain", input, "docs-domain");
+    const note = el("p", "muted", "Use a domain that only serves this documentation, not this server's own address. Changing it takes the site offline until the new domain is verified.");
+    openDialog({
+      title: "Documentation domain",
+      body: [label, note],
+      okLabel: "Save",
+      onSubmit: async () => {
+        const result = await api("/admin/docs-sites/" + encodeURIComponent(site.id), { method: "PATCH", body: { hostname: input.value.trim() || null } });
+        if (!result.ok) return { error: result.error };
+        toastOk(result.data.hostname ? "Domain saved. Point it at this server, then verify." : "Domain removed.");
+        loadDocs();
+        return true;
+      },
+    });
+  }
+
+  function docsDeleteDialog(site) {
+    openDialog({
+      title: "Delete " + site.name + "?",
+      body: [el("p", null, "This removes the site and every published version. The collection itself isn't touched.")],
+      okLabel: "Delete",
+      danger: true,
+      onSubmit: async () => {
+        const result = await api("/admin/docs-sites/" + encodeURIComponent(site.id), { method: "DELETE" });
+        if (!result.ok) return { error: result.error };
+        toastOk("Site deleted.");
+        loadDocs();
+        return true;
+      },
+    });
+  }
+
+  els.docsRefresh.addEventListener("click", () => loadDocs());
 
   /* ---- settings ---- */
 
