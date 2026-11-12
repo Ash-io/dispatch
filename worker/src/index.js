@@ -1910,7 +1910,8 @@ const DOCS_TYPES = [
   "application/yaml",
   "application/xml",
 ];
-const DOCS_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// Fonts may be data: URLs, because published sites carry their web fonts inline.
+const DOCS_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const SITE_COLS = "id, workspace_id, collection_uid, name, hostname, domain_status, verify_token, verified_at, checked_at, check_message, online, current_version, created_by, created_at, updated_at";
 
 const docsAllowHttp = (env) => String(env.DOCS_ALLOW_HTTP ?? "").toLowerCase() === "true";

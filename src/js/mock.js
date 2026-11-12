@@ -45,6 +45,23 @@ const mockCloud = {
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Active profile for cloud calls; the store syncs it in browser mode too.
+// Browser preview of AI documentation designs: a preset per direction, recoloured with the first brand colour.
+async function mockDesign(request) {
+  const { PRESETS, withAccent, isHex } = await import('./docgen/theme.js');
+  const prompt = String(request.prompt || '');
+  const brand = (prompt.match(/Brand colours: (#[0-9a-f]{6})/i) || [])[1];
+  const revise = /CHANGE ASKED FOR/.test(prompt);
+  const id = revise ? null : /DIRECTION: Bolder/.test(prompt) ? 'signal' : /DIRECTION: Quieter/.test(prompt) ? 'field-notes' : 'ledger';
+  let theme = revise ? JSON.parse(prompt.split('CURRENT THEME\n')[1].split('\n')[0]) : PRESETS.find((p) => p.id === id).theme;
+  if (brand && isHex(brand) && !revise) theme = withAccent(theme, brand);
+  if (revise) theme = { ...theme, shape: { ...theme.shape, radius: Math.max(0, theme.shape.radius - 4) } };
+  const { version, ...rest } = theme;
+  void version;
+  if (id === 'signal') rest.extraCss = '.header-banded .hero { background: linear-gradient(120deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #000)); }';
+  await delay(400);
+  return JSON.stringify({ name: revise ? 'Revised' : { ledger: 'Warm ledger', signal: 'Signal band', 'field-notes': 'Quiet notes' }[id], rationale: 'A mock design for the browser preview.', ...rest });
+}
+
 export const mockCtx = { profileId: null, region: 'us', server: false, baseUrl: null };
 const keyName = () => `apikey:${mockCtx.profileId ?? 'local'}`;
 
@@ -194,7 +211,8 @@ export const mockBridge = {
   },
   async aiDisconnect(provider) { write('ai-providers', (read('ai-providers') || []).filter((p) => p.id !== provider)); },
   async aiAsk(request, id, onEvent) {
-    const text = globalThis.__mockAiAnswer?.(request) ?? (request.schema ? JSON.stringify({ name: 'List users', method: 'GET', url: '{{baseUrl}}/users?page=1', headers: [{ key: 'Accept', value: 'application/json' }], bodyMode: 'none', body: '', description: 'Lists users, paginated.' }) : "```javascript\npm.test('Status is 200', () => pm.response.to.have.status(200));\n```");
+    const design = !globalThis.__mockAiAnswer && request.schema?.properties?.colors ? await mockDesign(request) : null;
+    const text = design ?? globalThis.__mockAiAnswer?.(request) ?? (request.schema ? JSON.stringify({ name: 'List users', method: 'GET', url: '{{baseUrl}}/users?page=1', headers: [{ key: 'Accept', value: 'application/json' }], bodyMode: 'none', body: '', description: 'Lists users, paginated.' }) : "```javascript\npm.test('Status is 200', () => pm.response.to.have.status(200));\n```");
     for (const part of text.match(/[\s\S]{1,12}/g) || []) { await delay(15); onEvent({ type: 'text', text: part }); }
     return { text, model: request.model || 'claude-opus-5', stopReason: 'end_turn', inputTokens: 100, outputTokens: 40 };
   },

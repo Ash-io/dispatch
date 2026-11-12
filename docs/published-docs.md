@@ -16,12 +16,34 @@ A collection in a workspace on a Dispatch server can be published as a public do
 2. **Scrub** (`scrub.js`): values that must never appear on a page are replaced with consistent fakes. These include vault secrets, the current values of variables on this device, and credential-looking or personal data.
 3. **Facts** (`facts.js`): a structured fact sheet built from examples, history, tests and chains, after scrubbing. Response shapes are merged across samples.
 4. **Write** (`write.js`): if AI writing is on, the configured AI provider writes the prose from the fact sheet only. Text that isn't grounded in the facts, or that uses banned or hedging phrases, is rejected. The step retries once and then leaves a gap for the author. With AI off, every piece of prose is a gap.
-5. **Build** (`build.js`): static HTML, CSS and an OpenAPI file, with the site name, accent colour and logo, plus a changelog that compares this version's structure with the previous one.
+5. **Build** (`build.js`): static HTML, CSS and an OpenAPI file in the site's design (below), with the site name and logo, plus a changelog that compares this version's structure with the previous one.
 6. **Final scan:** the built files are checked again for anything that looks like a real secret. If something is found, publishing is blocked.
 
 Before publishing, the author can review what the AI wrote and what was scrubbed, edit or pin text, preview the site, or export it as a zip.
 
 The AI provider receives the fact sheet, which has already been scrubbed. Nothing else leaves the device until the author publishes.
+
+## Design
+
+The review screen's **Design** tab sets how the site looks, with a live preview in light, dark, desktop and phone views. A design is a theme (`src/js/docgen/theme.js`): a JSON document of choices, never HTML or script.
+
+- **Layouts:** `reference` (sidebar, two columns per endpoint), `split` (code in a dark pane on the right), `editorial` (one reading column, contents on the right) and `index` (a top menu and the overview as a grid). They share the same markup, so search, anchors and code tabs work in all of them.
+- **Presets:** six starting points across the four layouts. After choosing one, you can change the layout, light/dark behaviour, accent, heading, text and code fonts, text size, heading contrast and weight, corners, spacing, rules, overview header and menu highlight.
+- **Fonts:** 33 web font families under the SIL Open Font License, listed in `src/js/docgen/fonts.js`, plus a few system font stacks. Each web font file is pinned to an exact `@fontsource` npm version on jsDelivr, with its size and SHA-256. The app downloads a file the first time a design uses it, checks it, and caches it in IndexedDB (`src/js/ui/fontcache.js`). A file that fails the check is discarded, and that family falls back to a system font. The site carries the fonts inline in `assets/fonts.css`, only the weights the design uses (about 100 to 160 KB), with each family's licence in `assets/fonts-license.txt`. Pages still load nothing from elsewhere. The documentation CSP allows `font-src 'self' data:` for this. To add families or update versions, edit and run `scripts/build-font-catalogue.mjs`.
+- **Design with AI** (`src/js/docgen/design.js`): from brand colours (taken from the logo in code, editable), an audience sentence, up to three tone words and sites the team likes, the documentation AI model creates three designs: closest to the brand, bolder and quieter. **Ask for a change** revises the current design from a plain instruction.
+  - The model gets the site name, those brand details, the design rules and the number of groups and requests. It never sees requests, paths, examples or variables. It answers with a theme in a fixed schema (`THEME_SCHEMA`): layouts, fonts and options are the same fixed choices as the controls.
+  - Every answer is validated and contrast-checked. Problems are sent back once. After that, fixable ones (contrast, pure black or white, a layout that doesn't suit the site's size, a light dark palette) are corrected in code and listed as adjustments, and a design the schema refuses is dropped.
+- **Brand website** (`src/js/docgen/brandsite.js`): **Read colours and fonts** fetches the home page and up to four stylesheets through the normal request engine. Only colours (hex, rgb, hsl or oklch, neutrals left out, brand-named custom properties weighted) and font names (at most four words and 32 characters, so page text can't pass as one) are kept, and only those reach the AI. Fonts the catalogue has are matched to it. Cookies the site sets during this are deleted again.
+- **Extra CSS:** an optional block, written by the author in the Adjust section or by the AI in `extraCss`, for touches the options can't express. `cleanCss` in `theme.js` drops comments, then refuses backslash escapes and `<` outright. It keeps plain rules and `@media` blocks, scopes every selector under `body`, and removes, with the reason shown:
+  - other at-rules, `*`, `html` and `:root`;
+  - `url()` and anything else that loads or computes from outside;
+  - `position: fixed`, and anything that hides content;
+  - font sizes below 12 px, removed focus outlines, and gradient text.
+
+  It's limited to 8 KB, and `themeCss` cleans it again when the CSS is written.
+- **Contrast:** every theme is checked in code against WCAG AA (4.5:1 for text, method colours, links, code and syntax colours, in each mode it uses). A colour that fails has its lightness moved until it passes, keeping its hue, and the tab says what was adjusted.
+- **Logo:** chosen on the first screen. Any image is redrawn as a PNG at most 96 px tall, which also drops anything an SVG could run, and published inline.
+- **Storage:** the theme is published with each version as `_dispatch/theme.json`. The next build starts from the current version's theme, so everyone publishing the site shares one design, and rolling back restores the old look. A design you haven't published yet is kept on your device until you publish it.
 
 ## Roles
 

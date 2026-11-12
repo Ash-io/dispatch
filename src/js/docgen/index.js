@@ -18,7 +18,7 @@ export { OMIT, BLANK };
  *   verified: { itemId: { env, date, ok } }
  *   ask(system, prompt, schema) → parsed JSON, or null to skip AI writing
  *   styleSample, pinned: { target: text | OMIT }
- *   site: { name, accent, logoDataUrl }, baseUrl, description
+ *   site: { name, logoDataUrl }, theme, fonts (see build.js), baseUrl, description
  *   previous: { structure, history: [{ version, published_at, changelog }] }
  *   version: the number this will be published as
  */
@@ -38,14 +38,14 @@ export async function generateDocs(opts) {
   progress({ step: 'build' });
   const now = new Date().toISOString();
   const changelog = diffStructure(opts.previous?.structure, structure(sheet));
-  const common = { site: opts.site, baseUrl: opts.baseUrl, description: opts.description, version: opts.version, generatedAt: now, changelog, history: opts.previous?.history || [] };
+  const common = { site: opts.site, theme: opts.theme, baseUrl: opts.baseUrl, description: opts.description, version: opts.version, generatedAt: now, changelog, history: opts.previous?.history || [] };
 
-  /** Builds again with edits from the review screen, without asking the AI again. */
-  const assemble = (edits) => {
+  /** Builds again with edits or a new theme from the review screen, without asking the AI again. */
+  const assemble = (edits, theme = opts.theme, fonts = opts.fonts) => {
     const texts = { ...written.texts };
     for (const [target, text] of Object.entries(edits)) texts[target] = { text, ai: false };
-    const files = buildSite(sheet, texts, common);
-    const previewFiles = buildSite(sheet, texts, { ...common, preview: true });
+    const files = buildSite(sheet, texts, { ...common, theme, fonts });
+    const previewFiles = buildSite(sheet, texts, { ...common, theme, fonts, preview: true });
     return {
       sheet,
       texts,
@@ -56,7 +56,9 @@ export async function generateDocs(opts) {
       secretHits: findSecrets(files, scrub),
       changelog,
       stats: { endpoints: sheet.endpoints.length, groups: sheet.groups.length, aiSentences: Object.values(texts).filter((t) => t.ai).length, facts: sheet.facts.size },
-      rebuild: (more) => assemble({ ...edits, ...more }),
+      theme,
+      rebuild: (more) => assemble({ ...edits, ...more }, theme, fonts),
+      retheme: (next, nextFonts = fonts) => assemble(edits, next, nextFonts),
     };
   };
   return assemble(pinned);

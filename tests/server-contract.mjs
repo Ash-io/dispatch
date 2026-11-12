@@ -625,6 +625,9 @@ await check('a documentation site is only reachable on its verified domain, and 
   assert.equal(home.status, 200);
   assert.match(home.text, /Version one/);
   assert.match(home.headers['content-security-policy'], /default-src 'none'/);
+  assert.match(home.headers['content-security-policy'], /font-src 'self' data:;/, 'sites carry their web fonts inline');
+  assert.match(home.headers['content-security-policy'], /script-src 'self';/);
+  assert.match(home.headers['content-security-policy'], /style-src 'self';/);
   assert.equal(home.headers['x-content-type-options'], 'nosniff');
   assert.match((await hostGet(DOCS_HOST, '/r/orders')).text, /Orders/, 'pages answer without .html');
   assert.equal((await hostGet(DOCS_HOST, '/assets/site.css')).headers['content-type'], 'text/css; charset=utf-8');

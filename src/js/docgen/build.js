@@ -6,6 +6,7 @@ import { buildOutgoing } from '../send.js';
 import { generate } from '../codegen.js';
 import { structure } from './facts.js';
 import { SITE_CSS, SITE_JS } from './assets.js';
+import { normalizeTheme, themeCss, bodyClasses, withAccent, isHex, DEFAULT_THEME, fontFaceCss, fontLicenses } from './theme.js';
 
 export const OMIT = '__omit__';
 /** Publish without a description: the row stays, the text is empty. */
@@ -66,6 +67,25 @@ export function codeSamples(ep, baseUrl) {
 
 const pretty = (text) => { try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; } };
 
+/** Escaped HTML for a code block, with JSON coloured by token. Anything that isn't JSON is only escaped. */
+export function highlightJson(text) {
+  try { JSON.parse(text); } catch { return esc(text); }
+  let out = '';
+  let last = 0;
+  const re = /("(?:\\.|[^"\\])*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b|([{}[\],:])/g;
+  for (let m; (m = re.exec(text));) {
+    out += esc(text.slice(last, m.index));
+    if (m[1]) out += m[2] ? `<span class="sx-k">${esc(m[1])}</span><span class="sx-p">${esc(m[2])}</span>` : `<span class="sx-s">${esc(m[1])}</span>`;
+    else if (m[3]) out += `<span class="sx-n">${esc(m[3])}</span>`;
+    else if (m[4]) out += `<span class="sx-l">${m[4]}</span>`;
+    else out += `<span class="sx-p">${esc(m[5])}</span>`;
+    last = re.lastIndex;
+  }
+  return out + esc(text.slice(last));
+}
+
+const LOGO = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
+
 /** Nested JSON Schema from merged field paths (a.b, items[].id). */
 export function schemaFrom(fields) {
   const root = { type: fields.some((f) => f.path.startsWith('[]')) ? 'array' : 'object' };
@@ -118,12 +138,21 @@ function authSentence(sheet, baseUrl) {
 
 /**
  * Builds every file. `texts` maps targets to { text, ai }. Options:
- *   site: { name, accent, logoDataUrl }, baseUrl, version, generatedAt (ISO),
+ *   site: { name, logoDataUrl (a PNG data URL) }, theme (see theme.js),
+ *   fonts: { data: { "id:weight": base64 woff2 }, licenses: { id: text } }, baseUrl,
+ *   version, generatedAt (ISO),
  *   changelog: [lines for this version], history: [{ version, published_at, changelog }],
  *   preview: true marks AI text and gaps for the review screen.
  */
 export function buildSite(sheet, texts, opts = {}) {
-  const site = { name: 'API documentation', accent: '#2f6f5e', ...(opts.site || {}) };
+  const site = { name: 'API documentation', ...(opts.site || {}) };
+  // Sites set up before themes only had an accent colour.
+  const theme = normalizeTheme(opts.theme || (isHex(site.accent) ? withAccent(DEFAULT_THEME, site.accent) : DEFAULT_THEME)).theme;
+  const logo = LOGO.test(site.logoDataUrl || '') ? site.logoDataUrl : '';
+  // Web fonts travel inside the site; a family that wasn't downloaded falls back to its system stack.
+  const faces = fontFaceCss(theme, opts.fonts?.data || {});
+  const MAX_FONT_CSS = 1000 * 1024;
+  if (faces.length > MAX_FONT_CSS) throw new Error('The chosen fonts are too large to publish together. Choose fewer families.');
   const baseUrl = (opts.baseUrl || '').trim().replace(/\/+$/, '');
   const preview = !!opts.preview;
   const date = (opts.generatedAt || new Date().toISOString()).slice(0, 10);
@@ -150,6 +179,7 @@ export function buildSite(sheet, texts, opts = {}) {
 
   const groupHref = (g, root) => `${root}r/${g.slug}.html`;
   const nav = (root, current) => `<nav class="side" aria-label="Sections"><a class="nav-home${current === 'home' ? ' on' : ''}" href="${root}index.html">Overview</a>${sheet.groups.map((g) => `<div class="nav-group"><a class="${current === g.slug ? 'on' : ''}" href="${groupHref(g, root)}">${esc(g.name)}</a><ul>${g.endpoints.map((k) => { const e = sheet.endpoints.find((x) => x.key === k); return `<li><a href="${groupHref(g, root)}#${e.key}"><span class="m m-${e.method.toLowerCase()}">${e.method}</span>${esc(e.name)}</a></li>`; }).join('')}</ul></div>`).join('')}<a class="${current === 'changelog' ? 'on' : ''}" href="${root}changelog.html">Changelog</a></nav>`;
+  const page = (current) => (current === 'home' ? 'page-home' : current === 'changelog' ? 'page-changelog' : 'page-group');
   const shell = (title, root, current, main) => `<!doctype html>
 <html lang="en">
 <head>
@@ -157,11 +187,11 @@ export function buildSite(sheet, texts, opts = {}) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <meta name="generator" content="Dispatch">
-<link rel="stylesheet" href="${root}assets/site.css">
+${faces ? `<link rel="stylesheet" href="${root}assets/fonts.css">\n` : ''}<link rel="stylesheet" href="${root}assets/site.css">
 <script src="${root}assets/site.js" defer></script>
 </head>
-<body data-root="${root}">
-<header class="top"><a class="brand" href="${root}index.html">${site.logoDataUrl ? `<img src="${esc(site.logoDataUrl)}" alt="">` : ''}<span>${esc(site.name)}</span></a><div class="search"><input id="q" type="search" placeholder="Search" aria-label="Search the documentation" autocomplete="off"><ol id="hits" hidden></ol></div></header>
+<body data-root="${root}" class="${bodyClasses(theme)} ${page(current)}">
+<header class="top"><a class="brand" href="${root}index.html">${logo ? `<img src="${esc(logo)}" alt="">` : ''}<span>${esc(site.name)}</span></a><div class="search"><input id="q" type="search" placeholder="Search" aria-label="Search the documentation" autocomplete="off"><ol id="hits" hidden></ol></div></header>
 <div class="layout">${nav(root, current)}<main>${main}</main></div>
 <footer>Generated ${date}${opts.version ? ` · version ${esc(opts.version)}` : ''} · <a href="${root}openapi.json">OpenAPI</a> · <a href="${root}llms.txt">llms.txt</a></footer>
 </body>
@@ -187,8 +217,8 @@ export function buildSite(sheet, texts, opts = {}) {
       const samples = codeSamples(ep, baseUrl);
       const sampleHtml = samples.length ? `<div class="tabs" role="tablist">${samples.map((s, i) => `<button type="button" role="tab" data-lang="${s.lang}" aria-selected="${i === 0}">${esc(s.name)}</button>`).join('')}</div>${samples.map((s, i) => `<pre class="sample" data-lang="${s.lang}"${i ? ' hidden' : ''}><code>${esc(s.code)}</code></pre>`).join('')}` : '';
       const exampleBody = ok?.example?.body || ok?.historyExample?.body || '';
-      const exampleHtml = exampleBody ? `<p class="label">${ok.code} response</p><pre><code>${esc(pretty(exampleBody))}</code></pre>` : '';
-      const reqBody = ep.body.raw ? `<p class="label">Request body</p><pre><code>${esc(pretty(ep.body.raw))}</code></pre>` : '';
+      const exampleHtml = exampleBody ? `<p class="label">${ok.code} response</p><pre><code>${highlightJson(pretty(exampleBody))}</code></pre>` : '';
+      const reqBody = ep.body.raw ? `<p class="label">Request body</p><pre><code>${highlightJson(pretty(ep.body.raw))}</code></pre>` : '';
       search.push({ t: ep.name, u: `r/${g.slug}.html#${ep.key}`, s: `${ep.method} ${ep.displayPath}`, x: (ep.description || plain(`${b}.summary`)).slice(0, 200) });
 
       mdLines.push(`## ${ep.name}`, '', `\`${ep.method} ${ep.displayPath}\``, '', ep.description || plain(`${b}.summary`), '');
@@ -223,11 +253,22 @@ ${summary}
     return `<li><a href="r/${g.slug}.html#${ep.key}"><span class="m m-${ep.method.toLowerCase()}">${ep.method}</span><code>${esc(ep.displayPath)}</code></a> ${render(`qs.${i}`)}</li>`;
   }).join('');
   const errRows = sheet.errors.map((e) => `<tr><td><span class="code c4">${e.code}</span></td><td>${esc(REASONS[e.code] || '')}</td><td>${render(`err.${e.code}`)}</td><td>${e.endpoints.map((k) => { const ep = sheet.endpoints.find((x) => x.key === k); const g = sheet.groups.find((x) => x.name === ep.group); return `<a href="r/${g.slug}.html#${ep.key}">${esc(ep.name)}</a>`; }).join(', ')}</td></tr>`).join('');
-  const home = `<h1>${esc(site.name)}</h1>${overview}
+  // The split header shows the first request of the quickstart, or the first one, next to the introduction.
+  const heroEp = theme.header === 'split' ? sheet.endpoints.find((e) => e.key === sheet.quickstart[0]?.endpoint) || sheet.endpoints[0] : null;
+  const heroCode = (() => {
+    if (!heroEp) return '';
+    const sample = codeSamples(heroEp, baseUrl)[0];
+    const okResp = heroEp.responses.find((r) => r.code < 400);
+    const body = okResp?.example?.body || okResp?.historyExample?.body || '';
+    const lines = pretty(body).split('\n');
+    const shown = lines.length > 14 ? `${lines.slice(0, 13).join('\n')}\n  …` : lines.join('\n');
+    return `<aside class="hero-code" aria-label="Example request">${sample ? `<pre><code>${esc(sample.code)}</code></pre>` : ''}${body ? `<pre><code>${lines.length > 14 ? esc(shown) : highlightJson(shown)}</code></pre>` : ''}</aside>`;
+  })();
+  const home = `<section class="hero"><div><h1>${esc(site.name)}</h1>${overview}</div>${heroCode}</section>
 ${baseUrl ? `<h2>Base URL</h2><pre><code>${esc(baseUrl)}</code></pre>` : ''}
 ${authLines.length ? `<h2 id="auth">Authentication</h2>${authLines.map((l) => `<p>${l}</p>`).join('')}` : ''}
 ${qs ? `<h2 id="quickstart">Quickstart</h2><p class="muted">The order these requests are called in, taken from the collection.</p><ol class="steps">${qs}</ol>` : ''}
-<h2>Reference</h2><ul class="groups">${sheet.groups.map((g) => `<li><a href="r/${g.slug}.html">${esc(g.name)}</a> <span class="muted">${g.endpoints.length} request${g.endpoints.length === 1 ? '' : 's'}</span></li>`).join('')}</ul>
+<h2>Reference</h2><ul class="groups">${sheet.groups.map((g) => { const gd = g.description || plain(`group.${g.slug}`); return `<li><a href="r/${g.slug}.html">${esc(g.name)}</a> <span class="muted">${g.endpoints.length} request${g.endpoints.length === 1 ? '' : 's'}</span>${gd ? `<span class="gdesc">${inline(gd.split('\n')[0])}</span>` : ''}</li>`; }).join('')}</ul>
 ${errRows ? `<h2 id="errors">Errors</h2><table><thead><tr><th>Status</th><th></th><th>What to check</th><th>Returned by</th></tr></thead><tbody>${errRows}</tbody></table>` : ''}`;
   put('index.html', 'text/html; charset=utf-8', shell(site.name, '', 'home', home));
 
@@ -242,9 +283,15 @@ ${errRows ? `<h2 id="errors">Errors</h2><table><thead><tr><th>Status</th><th></t
   put('llms.txt', 'text/plain; charset=utf-8', [`# ${site.name}`, '', `> ${(opts.description || plain('overview') || `Reference for ${sheet.endpoints.length} requests.`).replace(/\n+/g, ' ')}`, '', baseUrl ? `Base URL: ${baseUrl}` : '', authLines.length ? `Authentication: ${authLines.map((l) => l.replace(/<[^>]+>/g, '')).join(' ')}` : '', '', '## Reference', '', ...sheet.groups.map((g) => `- [${g.name}](md/${g.slug}.md): ${g.endpoints.map((k) => { const e = sheet.endpoints.find((x) => x.key === k); return `${e.method} ${e.displayPath}`; }).join(', ')}`), '', '## Optional', '', '- [OpenAPI](openapi.json): the same API as OpenAPI 3.1', '- [Changelog](changelog.html)', ''].filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n'));
   put('md/index.md', 'text/markdown; charset=utf-8', [`# ${site.name}`, '', opts.description || plain('overview'), '', ...sheet.groups.map((g) => `- [${g.name}](${g.slug}.md)`), ''].join('\n'));
   put('search.json', 'application/json', JSON.stringify(search));
-  put('assets/site.css', 'text/css; charset=utf-8', SITE_CSS.replace('--accent: #2f6f5e', `--accent: ${/^#[0-9a-f]{3,8}$/i.test(site.accent) ? site.accent : '#2f6f5e'}`));
+  put('assets/site.css', 'text/css; charset=utf-8', `${SITE_CSS}\n/* Theme */\n${themeCss(theme)}`);
   put('assets/site.js', 'text/javascript; charset=utf-8', SITE_JS);
+  if (faces) {
+    put('assets/fonts.css', 'text/css; charset=utf-8', `/* Fonts under the SIL Open Font License 1.1. See fonts-license.txt. */\n${faces}\n`);
+    const licenses = opts.fonts?.licenses || {};
+    put('assets/fonts-license.txt', 'text/plain; charset=utf-8', fontLicenses(theme).map((f) => [`${f.name}`, f.copyright, `Source: ${f.url.replace(/\/LICENSE$/, '')}`, '', licenses[f.id] || 'Licensed under the SIL Open Font License, Version 1.1: https://openfontlicense.org', ''].join('\n')).join('\n------------------------------------------------------------\n\n'));
+  }
   put('_dispatch/structure.json', 'application/json', JSON.stringify(structure(sheet)));
+  put('_dispatch/theme.json', 'application/json', JSON.stringify(theme));
   put('_dispatch/meta.json', 'application/json', JSON.stringify({ generator: 'Dispatch', generatedAt: opts.generatedAt || new Date().toISOString(), version: opts.version ?? null }));
   return files;
 }
@@ -294,12 +341,15 @@ export function openapi(sheet, texts, { site, baseUrl, version, description }) {
   };
 }
 
-/** A page with its stylesheet inlined, for the in-app preview (scripts are never run there). */
-export function previewHtml(files, path) {
+/** A page with its stylesheet inlined, for the in-app preview (scripts are never run there). `mode` forces light or dark. */
+export function previewHtml(files, path, { mode } = {}) {
   const page = files.find((f) => f.path === path);
   const css = files.find((f) => f.path === 'assets/site.css')?.body || '';
+  const fonts = files.find((f) => f.path === 'assets/fonts.css')?.body || '';
   if (!page) return '';
   return page.body
+    .replace(/<link rel="stylesheet" href="[^"]*assets\/fonts\.css">\n?/, `<style>${fonts}</style>`)
     .replace(/<link rel="stylesheet" href="[^"]*assets\/site\.css">/, `<style>${css}\n.ai{background:color-mix(in srgb, #f5c542 28%, transparent);border-radius:3px}.gap{background:#ffd7d7;color:#8a1f1f;padding:0 4px;border-radius:3px}</style>`)
-    .replace(/<script[^>]*><\/script>/g, '');
+    .replace(/<script[^>]*><\/script>/g, '')
+    .replace('<html lang="en">', mode === 'light' || mode === 'dark' ? `<html lang="en" data-mode="${mode}">` : '<html lang="en">');
 }
