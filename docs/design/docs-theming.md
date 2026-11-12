@@ -210,7 +210,7 @@ The lock is a new boolean on `docs_sites`. Add it to `server/src/db.rs`, `worker
 
 1. **Themes without AI.** The theme schema and checks, the four layouts, the font catalogue, presets, direct controls, the logo field, and storage in `_dispatch/theme.json`. This alone fixes "every site looks the same". Built in PR #19, with font stacks in place of web fonts.
 2. **AI designs.** Brand facts from the logo, the three directions, retry and correction, and "Ask for a change". Built in PR #19. The model gets only counts of groups and requests, not even the longest path. After the retry, fixable problems (contrast, pure black or white, layout fit, palette lightness) are corrected in code, and only schema failures drop a design.
-3. **Website input and extra CSS.** Brand facts from a website, and cleaned extra CSS.
+3. **Website input and extra CSS.** Brand facts from a website, and cleaned extra CSS. Built in PR #19. The website is fetched through the normal request engine instead of a new native command, and cookies it sets are deleted. Backslash escapes and `<` refuse the whole block of extra CSS.
 
 ## Open questions
 
