@@ -14,6 +14,7 @@ import { generateDocs, OMIT, BLANK } from '../docgen/index.js';
 import { previewHtml } from '../docgen/build.js';
 import { PRESETS, DEFAULT_THEME, LAYOUTS, FONTS, MODES, HEADERS, NAVS, DENSITIES, validateTheme, normalizeTheme, contrastFailures, withAccent, isHex } from '../docgen/theme.js';
 import { zip, toBase64 } from '../docgen/zip.js';
+import { loadFonts } from './fontcache.js';
 
 const api = (method, path, body) => bridge.postman(method, path, body);
 const enc = encodeURIComponent;
@@ -224,6 +225,9 @@ async function runGeneration(ctx) {
       try { previous = { structure: await api('GET', `/docs-sites/${enc(site.id)}/versions/${site.current_version}/files/_dispatch/structure.json`), history: ctx.versions }; } catch { previous = { structure: null, history: ctx.versions }; }
     }
     const theme = await siteTheme(ctx, p);
+    const fontStep = step('Getting the design\'s fonts');
+    ctx.fonts = await loadFonts(theme);
+    fontStep.textContent = ctx.fonts.missing.length ? `Couldn't download ${ctx.fonts.missing.map((m) => m.name).join(', ')}; using system fonts instead` : 'Fonts ready';
     const known = await knownSecrets(entry);
     let writing = null;
     const result = await generateDocs({
@@ -238,6 +242,7 @@ async function runGeneration(ctx) {
       pinned: p.edits || {},
       site: { name: site.name, logoDataUrl: p.logo || '' },
       theme,
+      fonts: ctx.fonts,
       baseUrl: p.baseUrl,
       description: p.description,
       previous,
@@ -282,12 +287,18 @@ function renderReview(ctx, result, view = {}) {
     const next = ctx.result.rebuild(edits);
     renderReview(ctx, next, viewState());
   };
-  // A design change rebuilds the pages and refreshes the preview, leaving the controls as they are.
-  const retheme = (theme) => {
+  // A design change fetches any new fonts, rebuilds the pages and refreshes the preview, leaving the controls as they are.
+  let latest = 0;
+  const retheme = async (theme) => {
+    const mine = ++latest;
     p.theme = theme;
     S.saveSettings();
-    ctx.result = ctx.result.retheme(theme);
+    const fonts = await loadFonts(theme);
+    if (mine !== latest) return null;
+    ctx.fonts = fonts;
+    ctx.result = ctx.result.retheme(theme, fonts);
     show(current);
+    return fonts;
   };
 
   const gapRows = result.gaps.map((g) => {
@@ -407,6 +418,13 @@ function designPanel(ctx, retheme) {
   let theme = normalizeTheme(ctx.result.theme || DEFAULT_THEME).theme;
   const body = h('div', { class: 'docs-design' });
   const note = h('p', { class: 'hint', style: { margin: '8px 0 0' } });
+  const fontNote = h('p', { class: 'hint', style: { margin: '6px 0 0' } });
+  const describeFonts = (fonts) => {
+    fontNote.textContent = fonts?.missing?.length
+      ? `Couldn't download ${fonts.missing.map((m) => `${m.name} (${m.reason})`).join(', ')}. The site uses a system font in its place until it can be downloaded.`
+      : 'Web fonts are downloaded from jsDelivr the first time a design uses them, checked against their published checksums, and kept on this device. They\'re published inside the site with their licences, so readers\' browsers load nothing from anywhere else.';
+    fontNote.classList.toggle('err-text', !!fonts?.missing?.length);
+  };
   const describe = (fixes) => {
     note.textContent = fixes.length
       ? `Adjusted to keep text readable: ${fixes.slice(0, 3).join('; ')}${fixes.length > 3 ? `, and ${fixes.length - 3} more` : ''}.`
@@ -416,14 +434,14 @@ function designPanel(ctx, retheme) {
     const raw = validateTheme(next).theme;
     describe(contrastFailures(raw));
     theme = normalizeTheme(raw).theme;
-    retheme(theme);
+    retheme(theme).then((fonts) => { if (fonts) describeFonts(fonts); }).catch((e) => toast(errText(e), { error: true }));
     if (redraw) draw();
     else body.querySelectorAll('.docs-preset').forEach((el) => el.classList.toggle('on', same(PRESETS.find((pr) => pr.id === el.dataset.id).theme, theme)));
   };
   const edit = (fn) => { const next = JSON.parse(JSON.stringify(theme)); fn(next); set(next); };
 
-  const select = (value, options, onchange) => h('select', { class: 'select', onchange: (e) => onchange(e.target.value) }, options.map(([v, label]) => h('option', { value: String(v), selected: String(v) === String(value) }, label)));
-  const fontOptions = (role) => Object.entries(FONTS).filter(([, f]) => f.roles.includes(role)).map(([id, f]) => [id, f.name]);
+  const select = (value, options, onchange) => h('select', { class: 'select', onchange: (e) => onchange(e.target.value) }, options.map(([v, label, title]) => h('option', { value: String(v), selected: String(v) === String(value), title }, label)));
+  const fontOptions = (role) => Object.entries(FONTS).filter(([, f]) => f.roles.includes(role)).map(([id, f]) => [id, f.name, f.voice]);
   const cap = (s) => s[0].toUpperCase() + s.slice(1);
 
   const draw = () => {
@@ -459,9 +477,11 @@ function designPanel(ctx, retheme) {
         h('label', null, 'Overview header'), select(theme.header, HEADERS.map((x) => [x, { plain: 'Plain', banded: 'Band in the accent colour', split: 'Introduction beside a first request' }[x]]), (v) => edit((t) => { t.header = v; })),
         h('label', null, 'Menu highlight'), select(theme.nav, NAVS.map((x) => [x, x === 'quiet' ? 'Coloured text' : 'Filled']), (v) => edit((t) => { t.nav = v; }))),
       note,
+      fontNote,
       h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '8px' } }, h('button', { class: 'btn sm ghost', onclick: () => set(DEFAULT_THEME, true) }, 'Reset to the default')));
   };
   describe(contrastFailures(validateTheme(ctx.result.theme || DEFAULT_THEME).theme));
+  describeFonts(ctx.fonts);
   draw();
   return body;
 }

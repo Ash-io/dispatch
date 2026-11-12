@@ -6,7 +6,7 @@ import { buildOutgoing } from '../send.js';
 import { generate } from '../codegen.js';
 import { structure } from './facts.js';
 import { SITE_CSS, SITE_JS } from './assets.js';
-import { normalizeTheme, themeCss, bodyClasses, withAccent, isHex, DEFAULT_THEME } from './theme.js';
+import { normalizeTheme, themeCss, bodyClasses, withAccent, isHex, DEFAULT_THEME, fontFaceCss, fontLicenses } from './theme.js';
 
 export const OMIT = '__omit__';
 /** Publish without a description: the row stays, the text is empty. */
@@ -138,7 +138,8 @@ function authSentence(sheet, baseUrl) {
 
 /**
  * Builds every file. `texts` maps targets to { text, ai }. Options:
- *   site: { name, logoDataUrl (a PNG data URL) }, theme (see theme.js), baseUrl,
+ *   site: { name, logoDataUrl (a PNG data URL) }, theme (see theme.js),
+ *   fonts: { data: { "id:weight": base64 woff2 }, licenses: { id: text } }, baseUrl,
  *   version, generatedAt (ISO),
  *   changelog: [lines for this version], history: [{ version, published_at, changelog }],
  *   preview: true marks AI text and gaps for the review screen.
@@ -148,6 +149,10 @@ export function buildSite(sheet, texts, opts = {}) {
   // Sites set up before themes only had an accent colour.
   const theme = normalizeTheme(opts.theme || (isHex(site.accent) ? withAccent(DEFAULT_THEME, site.accent) : DEFAULT_THEME)).theme;
   const logo = LOGO.test(site.logoDataUrl || '') ? site.logoDataUrl : '';
+  // Web fonts travel inside the site; a family that wasn't downloaded falls back to its system stack.
+  const faces = fontFaceCss(theme, opts.fonts?.data || {});
+  const MAX_FONT_CSS = 1000 * 1024;
+  if (faces.length > MAX_FONT_CSS) throw new Error('The chosen fonts are too large to publish together. Choose fewer families.');
   const baseUrl = (opts.baseUrl || '').trim().replace(/\/+$/, '');
   const preview = !!opts.preview;
   const date = (opts.generatedAt || new Date().toISOString()).slice(0, 10);
@@ -182,7 +187,7 @@ export function buildSite(sheet, texts, opts = {}) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <meta name="generator" content="Dispatch">
-<link rel="stylesheet" href="${root}assets/site.css">
+${faces ? `<link rel="stylesheet" href="${root}assets/fonts.css">\n` : ''}<link rel="stylesheet" href="${root}assets/site.css">
 <script src="${root}assets/site.js" defer></script>
 </head>
 <body data-root="${root}" class="${bodyClasses(theme)} ${page(current)}">
@@ -280,6 +285,11 @@ ${errRows ? `<h2 id="errors">Errors</h2><table><thead><tr><th>Status</th><th></t
   put('search.json', 'application/json', JSON.stringify(search));
   put('assets/site.css', 'text/css; charset=utf-8', `${SITE_CSS}\n/* Theme */\n${themeCss(theme)}`);
   put('assets/site.js', 'text/javascript; charset=utf-8', SITE_JS);
+  if (faces) {
+    put('assets/fonts.css', 'text/css; charset=utf-8', `/* Fonts under the SIL Open Font License 1.1. See fonts-license.txt. */\n${faces}\n`);
+    const licenses = opts.fonts?.licenses || {};
+    put('assets/fonts-license.txt', 'text/plain; charset=utf-8', fontLicenses(theme).map((f) => [`${f.name}`, f.copyright, `Source: ${f.url.replace(/\/LICENSE$/, '')}`, '', licenses[f.id] || 'Licensed under the SIL Open Font License, Version 1.1: https://openfontlicense.org', ''].join('\n')).join('\n------------------------------------------------------------\n\n'));
+  }
   put('_dispatch/structure.json', 'application/json', JSON.stringify(structure(sheet)));
   put('_dispatch/theme.json', 'application/json', JSON.stringify(theme));
   put('_dispatch/meta.json', 'application/json', JSON.stringify({ generator: 'Dispatch', generatedAt: opts.generatedAt || new Date().toISOString(), version: opts.version ?? null }));
@@ -335,8 +345,10 @@ export function openapi(sheet, texts, { site, baseUrl, version, description }) {
 export function previewHtml(files, path, { mode } = {}) {
   const page = files.find((f) => f.path === path);
   const css = files.find((f) => f.path === 'assets/site.css')?.body || '';
+  const fonts = files.find((f) => f.path === 'assets/fonts.css')?.body || '';
   if (!page) return '';
   return page.body
+    .replace(/<link rel="stylesheet" href="[^"]*assets\/fonts\.css">\n?/, `<style>${fonts}</style>`)
     .replace(/<link rel="stylesheet" href="[^"]*assets\/site\.css">/, `<style>${css}\n.ai{background:color-mix(in srgb, #f5c542 28%, transparent);border-radius:3px}.gap{background:#ffd7d7;color:#8a1f1f;padding:0 4px;border-radius:3px}</style>`)
     .replace(/<script[^>]*><\/script>/g, '')
     .replace('<html lang="en">', mode === 'light' || mode === 'dark' ? `<html lang="en" data-mode="${mode}">` : '<html lang="en">');

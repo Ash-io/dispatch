@@ -1350,7 +1350,8 @@ import { gatherEndpoints, splitUrl, testsFrom } from '../src/js/docgen/gather.js
 import { mergeShape, buildFacts, structure, diffStructure, displayPath } from '../src/js/docgen/facts.js';
 import { lint, plan, writeAll, repeatedOpenings } from '../src/js/docgen/write.js';
 import { buildSite, markdown, schemaFrom, previewHtml, highlightJson } from '../src/js/docgen/build.js';
-import { PRESETS, DEFAULT_THEME, LAYOUTS, contrast, fixContrast, validateTheme, normalizeTheme, contrastFailures, contrastReport, withAccent, themeCss, toOklch, fromOklch } from '../src/js/docgen/theme.js';
+import { PRESETS, DEFAULT_THEME, LAYOUTS, contrast, fixContrast, validateTheme, normalizeTheme, contrastFailures, contrastReport, withAccent, themeCss, toOklch, fromOklch, fontFiles, fontFaceCss, fontLicenses, FONTS } from '../src/js/docgen/theme.js';
+import { WEB_FONTS } from '../src/js/docgen/fonts.js';
 import { generateDocs, OMIT } from '../src/js/docgen/index.js';
 import { zip, crc32 } from '../src/js/docgen/zip.js';
 
@@ -1643,4 +1644,54 @@ test('only a PNG data URL is published as the logo, and the preview can force a 
   const files = build('');
   assert.match(previewHtml(files, 'index.html', { mode: 'dark' }), /<html lang="en" data-mode="dark">/);
   assert.match(previewHtml(files, 'index.html'), /<html lang="en">/);
+});
+
+test('the web font catalogue is pinned, checksummed and OFL-licensed', () => {
+  assert.ok(Object.keys(WEB_FONTS).length >= 24);
+  for (const [id, f] of Object.entries(WEB_FONTS)) {
+    assert.ok(f.name && f.voice && f.roles.length && f.copyright, id);
+    assert.match(f.license.url, new RegExp(`^https://cdn\\.jsdelivr\\.net/npm/@fontsource/${id}@\\d+\\.\\d+\\.\\d+/LICENSE$`), id);
+    assert.match(f.license.sha256, /^[0-9a-f]{64}$/, id);
+    assert.ok(Object.keys(f.files).length, id);
+    for (const [w, file] of Object.entries(f.files)) {
+      assert.match(file.url, new RegExp(`^https://cdn\\.jsdelivr\\.net/npm/@fontsource/${id}@\\d+\\.\\d+\\.\\d+/files/${id}-latin-${w}-normal\\.woff2$`), `${id} ${w}`);
+      assert.match(file.sha256, /^[0-9a-f]{64}$/);
+      assert.ok(file.size > 1000 && file.size < 200_000);
+    }
+    assert.equal(FONTS[id].kind, 'web');
+    assert.match(FONTS[id].stack, new RegExp(`^"${f.name}", `), 'web fonts fall back to a system stack');
+  }
+  for (const role of ['body', 'display', 'mono']) assert.ok(Object.values(FONTS).filter((f) => f.roles.includes(role)).length >= 5, role);
+});
+
+test('a theme asks only for the font weights it uses, mapped to the nearest the family has', () => {
+  assert.deepEqual(fontFiles(DEFAULT_THEME), [], 'the default uses system fonts and downloads nothing');
+  const t = { ...DEFAULT_THEME, type: { ...DEFAULT_THEME.type, body: 'inter', display: 'dm-serif-display', mono: 'space-mono', headingWeight: 600 } };
+  assert.deepEqual(fontFiles(t).map((f) => `${f.id}:${f.weight}`).sort(), ['dm-serif-display:400', 'inter:400', 'inter:600', 'inter:700', 'space-mono:400', 'space-mono:700']);
+  assert.deepEqual(fontLicenses(t).map((f) => f.id).sort(), ['dm-serif-display', 'inter', 'space-mono']);
+  const css = fontFaceCss(t, { 'inter:400': 'AAAA', 'inter:600': 'BBBB' });
+  assert.equal((css.match(/@font-face/g) || []).length, 2, 'only downloaded files get a rule');
+  assert.match(css, /font-family: "Inter"; font-style: normal; font-weight: 400; font-display: swap; src: url\(data:font\/woff2;base64,AAAA\) format\("woff2"\)/);
+  for (const p of PRESETS.slice(1)) assert.ok(fontFiles(p.theme).length >= 4, `${p.id} uses web fonts`);
+});
+
+test('web fonts are published inline with their licences, and leave pages alone when missing', () => {
+  const sheet = buildFacts(gatherEndpoints(DOCS_COLLECTION, { scrub: createScrubber() }), {});
+  const theme = PRESETS.find((p) => p.id === 'ledger').theme;
+  const data = Object.fromEntries(fontFiles(theme).map((f) => [`${f.id}:${f.weight}`, 'd09GMgABAAA=']));
+  const files = buildSite(sheet, {}, { site: { name: 'S' }, theme, fonts: { data, licenses: { newsreader: 'Copyright Newsreader authors\n\nSIL OPEN FONT LICENSE Version 1.1' } } });
+  const get = (path) => files.find((f) => f.path === path);
+  assert.match(get('assets/fonts.css').body, /@font-face \{ font-family: "Newsreader"/);
+  assert.equal(get('assets/fonts.css').content_type, 'text/css; charset=utf-8');
+  assert.match(get('index.html').body, /<link rel="stylesheet" href="assets\/fonts\.css">\n<link rel="stylesheet" href="assets\/site\.css">/);
+  assert.match(get('r/orders.html').body, /href="\.\.\/assets\/fonts\.css"/);
+  const lic = get('assets/fonts-license.txt').body;
+  for (const name of ['Newsreader', 'Source Sans 3', 'IBM Plex Mono']) assert.ok(lic.includes(name), name);
+  assert.match(lic, /SIL OPEN FONT LICENSE Version 1\.1/);
+  assert.match(lic, /openfontlicense\.org/, 'a licence that could not be downloaded is still named and linked');
+  assert.match(previewHtml(files, 'index.html'), /<style>\/\* Fonts under the SIL Open Font License/);
+  assert.match(get('assets/site.css').body, /--display: "Newsreader", /);
+  const without = buildSite(sheet, {}, { site: { name: 'S' }, theme });
+  assert.ok(!without.some((f) => f.path.startsWith('assets/fonts')));
+  assert.ok(!without.find((f) => f.path === 'index.html').body.includes('fonts.css'));
 });

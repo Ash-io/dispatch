@@ -18,7 +18,7 @@ export { OMIT, BLANK };
  *   verified: { itemId: { env, date, ok } }
  *   ask(system, prompt, schema) → parsed JSON, or null to skip AI writing
  *   styleSample, pinned: { target: text | OMIT }
- *   site: { name, logoDataUrl }, theme, baseUrl, description
+ *   site: { name, logoDataUrl }, theme, fonts (see build.js), baseUrl, description
  *   previous: { structure, history: [{ version, published_at, changelog }] }
  *   version: the number this will be published as
  */
@@ -41,11 +41,11 @@ export async function generateDocs(opts) {
   const common = { site: opts.site, theme: opts.theme, baseUrl: opts.baseUrl, description: opts.description, version: opts.version, generatedAt: now, changelog, history: opts.previous?.history || [] };
 
   /** Builds again with edits or a new theme from the review screen, without asking the AI again. */
-  const assemble = (edits, theme = opts.theme) => {
+  const assemble = (edits, theme = opts.theme, fonts = opts.fonts) => {
     const texts = { ...written.texts };
     for (const [target, text] of Object.entries(edits)) texts[target] = { text, ai: false };
-    const files = buildSite(sheet, texts, { ...common, theme });
-    const previewFiles = buildSite(sheet, texts, { ...common, theme, preview: true });
+    const files = buildSite(sheet, texts, { ...common, theme, fonts });
+    const previewFiles = buildSite(sheet, texts, { ...common, theme, fonts, preview: true });
     return {
       sheet,
       texts,
@@ -57,8 +57,8 @@ export async function generateDocs(opts) {
       changelog,
       stats: { endpoints: sheet.endpoints.length, groups: sheet.groups.length, aiSentences: Object.values(texts).filter((t) => t.ai).length, facts: sheet.facts.size },
       theme,
-      rebuild: (more) => assemble({ ...edits, ...more }, theme),
-      retheme: (next) => assemble(edits, next),
+      rebuild: (more) => assemble({ ...edits, ...more }, theme, fonts),
+      retheme: (next, nextFonts = fonts) => assemble(edits, next, nextFonts),
     };
   };
   return assemble(pinned);

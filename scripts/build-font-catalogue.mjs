@@ -1,0 +1,90 @@
+// Writes src/js/docgen/fonts.js: the web fonts documentation themes can use.
+// Each family comes from a pinned @fontsource npm package on jsDelivr. For
+// every file the catalogue records its URL, size and SHA-256, so the app can
+// check what it downloads. Run again to add families or update versions:
+//   node --dns-result-order=ipv4first scripts/build-font-catalogue.mjs
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+
+// id, voice, roles. Every family must be SIL Open Font License 1.1.
+const FAMILIES = [
+  ['inter', 'crisp neo-grotesque, neutral and very legible', ['body', 'display']],
+  ['ibm-plex-sans', 'engineered grotesque with a technical edge', ['body', 'display']],
+  ['source-sans-3', 'clear humanist sans, calm and readable', ['body', 'display']],
+  ['dm-sans', 'low-contrast geometric sans, friendly', ['body', 'display']],
+  ['manrope', 'modern semi-condensed grotesque', ['body', 'display']],
+  ['work-sans', 'grotesque with early-1900s character', ['body', 'display']],
+  ['public-sans', 'strong, neutral government-style sans', ['body', 'display']],
+  ['figtree', 'clean geometric sans, warm and open', ['body', 'display']],
+  ['outfit', 'rounded geometric sans, playful', ['body', 'display']],
+  ['lexend', 'wide sans designed for reading ease', ['body', 'display']],
+  ['sora', 'geometric sans with a techy feel', ['body', 'display']],
+  ['space-grotesk', 'quirky grotesque with mono roots', ['display']],
+  ['bricolage-grotesque', 'expressive grotesque with ink traps', ['display']],
+  ['syne', 'wide, art-school display sans', ['display']],
+  ['archivo', 'sturdy grotesque for headlines', ['display', 'body']],
+  ['barlow-condensed', 'condensed, signage-like industrial sans', ['display']],
+  ['fraunces', 'soft, wonky old-style display serif', ['display']],
+  ['playfair-display', 'high-contrast transitional display serif', ['display']],
+  ['dm-serif-display', 'high-contrast didone for big headings', ['display']],
+  ['instrument-serif', 'condensed, elegant editorial serif', ['display']],
+  ['young-serif', 'heavy, friendly old-style serif', ['display']],
+  ['newsreader', 'editorial text serif made for reading', ['body', 'display']],
+  ['literata', 'book serif for long reading', ['body', 'display']],
+  ['source-serif-4', 'sturdy transitional text serif', ['body', 'display']],
+  ['ibm-plex-serif', 'engineered serif, pairs with Plex Sans', ['body', 'display']],
+  ['zilla-slab', 'contemporary slab with personality', ['display']],
+  ['bitter', 'slab serif built for screens', ['body', 'display']],
+  ['jetbrains-mono', 'coding monospace with tall x-height', ['mono']],
+  ['ibm-plex-mono', 'engineered monospace', ['mono']],
+  ['fira-code', 'monospace with programming ligatures', ['mono']],
+  ['source-code-pro', 'neutral, open coding monospace', ['mono']],
+  ['space-mono', 'retro-futurist monospace', ['mono']],
+  ['dm-mono', 'soft, low-contrast monospace', ['mono']],
+];
+const WEIGHTS = [400, 500, 600, 700];
+const CDN = 'https://cdn.jsdelivr.net/npm';
+
+async function get(url, as = 'text') {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      return as === 'bytes' ? Buffer.from(await res.arrayBuffer()) : await res.text();
+    } catch (e) {
+      if (attempt >= 4) throw e;
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
+  }
+}
+
+const out = {};
+for (const [id, voice, roles] of FAMILIES) {
+  const version = (await get(`https://registry.npmjs.org/@fontsource/${id}/latest`).then(JSON.parse)).version;
+  const pkg = JSON.parse(await get(`https://registry.npmjs.org/@fontsource/${id}/${version}`));
+  if (pkg.license !== 'OFL-1.1') throw new Error(`${id} is ${pkg.license}, not OFL-1.1`);
+  const base = `${CDN}/@fontsource/${id}@${version}`;
+  const meta = JSON.parse(await get(`${base}/metadata.json`));
+  const license = await get(`${base}/LICENSE`);
+  // The notice is everything before the licence text itself.
+  const copyright = license.split(/This Font Software is licensed/)[0].replace(/\s+/g, ' ').trim();
+  const files = {};
+  for (const w of WEIGHTS.filter((x) => meta.weights.includes(x))) {
+    const url = `${base}/files/${id}-latin-${w}-normal.woff2`;
+    const bytes = await get(url, 'bytes');
+    files[w] = { url, size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
+  }
+  if (!files[400] && !Object.keys(files).length) throw new Error(`${id} has no usable weights`);
+  const licenseFile = { url: `${base}/LICENSE`, size: Buffer.byteLength(license), sha256: crypto.createHash('sha256').update(license).digest('hex') };
+  out[id] = { name: meta.family, voice, roles, category: meta.category, copyright: copyright || `${meta.family} authors`, license: licenseFile, files };
+  console.log(id, version, Object.keys(files).join(','), Object.values(files).reduce((a, f) => a + f.size, 0));
+}
+
+const body = `// Generated by scripts/build-font-catalogue.mjs. Don't edit by hand.
+// Web fonts for documentation themes: SIL Open Font License 1.1 families from
+// pinned @fontsource packages, Latin subset, with each file's SHA-256.
+
+export const WEB_FONTS = ${JSON.stringify(out, null, 1)};
+`;
+fs.writeFileSync(new URL('../src/js/docgen/fonts.js', import.meta.url), body);
+console.log('wrote', Object.keys(out).length, 'families');

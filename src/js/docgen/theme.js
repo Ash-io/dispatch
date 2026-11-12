@@ -16,12 +16,15 @@ export const NAVS = ['quiet', 'boxed'];
 export const DENSITIES = ['compact', 'regular', 'airy'];
 export const BORDERS = ['hairline', 'none'];
 
+import { WEB_FONTS } from './fonts.js';
+
 /**
- * Fonts. Phase one uses font stacks: families most systems already have, so
- * pages load nothing. Each stack names a voice; the reader's system picks the
- * first family it has.
+ * Fonts: web fonts from the catalogue in fonts.js, downloaded once, checked
+ * against their SHA-256 and published inside the site, plus system stacks
+ * that load nothing. A web font's stack ends in a system fallback of the
+ * same kind, used until it loads or if it couldn't be downloaded.
  */
-export const FONTS = {
+const SYSTEM_FONTS = {
   'system-sans': { name: 'System sans', voice: 'neutral sans, the reader\'s own UI font', roles: ['body', 'display'], stack: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' },
   grotesque: { name: 'Grotesque', voice: 'crisp neo-grotesque (Inter, Helvetica, Arial)', roles: ['body', 'display'], stack: 'Inter, "Helvetica Neue", "Arial Nova", "Nimbus Sans", Helvetica, Arial, sans-serif' },
   humanist: { name: 'Humanist', voice: 'warm, calligraphic sans (Seravek, Gill Sans, Ubuntu, Calibri)', roles: ['body', 'display'], stack: 'Seravek, "Gill Sans Nova", Ubuntu, Calibri, "DejaVu Sans", source-sans-pro, sans-serif' },
@@ -36,6 +39,43 @@ export const FONTS = {
   'mono-code': { name: 'Code mono', voice: 'modern coding monospace', roles: ['mono'], stack: 'ui-monospace, "Cascadia Code", "Source Code Pro", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace' },
   'mono-type': { name: 'Typewriter mono', voice: 'typewriter monospace', roles: ['mono'], stack: '"Nimbus Mono PS", "Courier New", Courier, monospace' },
 };
+const FALLBACK = { 'sans-serif': 'system-sans', serif: 'transitional', monospace: 'mono-code', display: 'system-sans', handwriting: 'system-sans' };
+export const FONTS = {
+  ...Object.fromEntries(Object.entries(WEB_FONTS).map(([id, f]) => [id, { name: f.name, voice: f.voice, roles: f.roles, kind: 'web', stack: `"${f.name}", ${SYSTEM_FONTS[FALLBACK[f.category] || 'system-sans'].stack}` }])),
+  ...Object.fromEntries(Object.entries(SYSTEM_FONTS).map(([id, f]) => [id, { ...f, name: `${f.name} (system)`, kind: 'system' }])),
+};
+
+const nearest = (weights, want) => weights.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a));
+
+/**
+ * The web font files a theme needs: regular, semibold and bold for text, the
+ * heading weight for headings, regular and bold for code. Weights a family
+ * doesn't have map to its nearest. Returns [{ id, weight, url, size, sha256 }].
+ */
+export function fontFiles(theme) {
+  const want = new Map();
+  const add = (id, weights) => {
+    const f = WEB_FONTS[id];
+    if (!f) return;
+    const have = Object.keys(f.files).map(Number);
+    for (const w of weights) {
+      const pick = nearest(have, w);
+      want.set(`${id}:${pick}`, { id, weight: pick, ...f.files[pick] });
+    }
+  };
+  add(theme.type.body, [400, 600, 700]);
+  add(theme.type.display, [theme.type.headingWeight >= 650 ? 700 : theme.type.headingWeight]);
+  add(theme.type.mono, [400, 700]);
+  return [...want.values()];
+}
+
+/** The licence files for the web font families a theme uses. */
+export const fontLicenses = (theme) => [...new Set([theme.type.body, theme.type.display, theme.type.mono])].filter((id) => WEB_FONTS[id]).map((id) => ({ id, name: WEB_FONTS[id].name, copyright: WEB_FONTS[id].copyright, ...WEB_FONTS[id].license }));
+
+/** @font-face rules with the font inline, so pages load nothing from elsewhere. `data` maps "id:weight" to base64. */
+export function fontFaceCss(theme, data = {}) {
+  return fontFiles(theme).filter((f) => data[`${f.id}:${f.weight}`]).map((f) => `@font-face { font-family: "${WEB_FONTS[f.id].name}"; font-style: normal; font-weight: ${f.weight}; font-display: swap; src: url(data:font/woff2;base64,${data[`${f.id}:${f.weight}`]}) format("woff2"); }`).join('\n');
+}
 
 export const COLOR_KEYS = ['bg', 'surface', 'text', 'muted', 'line', 'accent', 'onAccent', 'codeBg', 'codeText', 'get', 'post', 'put', 'patch', 'delete'];
 export const SYNTAX_KEYS = ['key', 'string', 'number', 'literal', 'punct'];
@@ -188,25 +228,25 @@ export const DEFAULT_THEME = Object.freeze(base({
 
 export const PRESETS = [
   { id: 'default', name: 'Dispatch', note: 'The default: sidebar, green accent, system fonts.', theme: DEFAULT_THEME },
-  { id: 'ledger', name: 'Ledger', note: 'Warm paper, a serif display and the code in a dark pane.', theme: base({
+  { id: 'ledger', name: 'Ledger', note: 'Warm paper, Newsreader headings and the code in a dark pane.', theme: base({
     seed: { accent: '#b4462b', hue: 70, tint: 0.014, code: 'dark' },
-    theme: { layout: 'split', header: 'split', nav: 'quiet', type: { display: 'transitional', body: 'humanist', headingWeight: 600, scale: 1.25, baseSize: 16 }, shape: { radius: 4 } },
+    theme: { layout: 'split', header: 'split', nav: 'quiet', type: { display: 'newsreader', body: 'source-sans-3', mono: 'ibm-plex-mono', headingWeight: 600, scale: 1.25, baseSize: 16 }, shape: { radius: 4 } },
   }) },
-  { id: 'signal', name: 'Signal', note: 'Engineered and dense, with a top menu and a cobalt band.', theme: base({
+  { id: 'signal', name: 'Signal', note: 'Engineered and dense: condensed headings, IBM Plex, a cobalt band.', theme: base({
     seed: { accent: '#2a55d4', hue: 255, tint: 0.01, code: 'dark' },
-    theme: { layout: 'index', header: 'banded', nav: 'quiet', type: { display: 'industrial', body: 'grotesque', headingWeight: 700, headingTracking: 0, scale: 1.25 }, shape: { radius: 2, density: 'compact' } },
+    theme: { layout: 'index', header: 'banded', nav: 'quiet', type: { display: 'barlow-condensed', body: 'ibm-plex-sans', mono: 'ibm-plex-mono', headingWeight: 600, headingTracking: 0, scale: 1.333 }, shape: { radius: 2, density: 'compact' } },
   }) },
-  { id: 'field-notes', name: 'Field notes', note: 'A reading column in a literary serif, for small public APIs.', theme: base({
+  { id: 'field-notes', name: 'Field notes', note: 'A reading column in Instrument Serif and Literata, for small public APIs.', theme: base({
     seed: { accent: '#2f6b3a', hue: 95, tint: 0.016, code: 'light' },
-    theme: { layout: 'editorial', header: 'plain', nav: 'quiet', type: { display: 'old-style', body: 'transitional', headingWeight: 600, scale: 1.3, baseSize: 17 }, shape: { radius: 3, density: 'airy' } },
+    theme: { layout: 'editorial', header: 'plain', nav: 'quiet', type: { display: 'instrument-serif', body: 'literata', mono: 'source-code-pro', headingWeight: 400, headingTracking: 0, scale: 1.333, baseSize: 17 }, shape: { radius: 3, density: 'airy' } },
   }) },
-  { id: 'night-shift', name: 'Night shift', note: 'Dark only, geometric type, amber accent.', theme: base({
+  { id: 'night-shift', name: 'Night shift', note: 'Dark only, Outfit and DM Sans, amber accent.', theme: base({
     seed: { accent: '#e3a23b', hue: 260, tint: 0.018, code: 'dark' },
-    theme: { mode: 'dark', layout: 'reference', header: 'banded', nav: 'boxed', type: { display: 'geometric', body: 'geometric', headingWeight: 600, scale: 1.22 }, shape: { radius: 10 } },
+    theme: { mode: 'dark', layout: 'reference', header: 'banded', nav: 'boxed', type: { display: 'outfit', body: 'dm-sans', mono: 'jetbrains-mono', headingWeight: 600, scale: 1.25 }, shape: { radius: 10 } },
   }) },
-  { id: 'studio', name: 'Studio', note: 'Soft and roomy, rounded headings, plum accent.', theme: base({
+  { id: 'studio', name: 'Studio', note: 'Soft and roomy, Bricolage Grotesque headings, plum accent.', theme: base({
     seed: { accent: '#7a3d8f', hue: 320, tint: 0.012, code: 'dark' },
-    theme: { layout: 'split', header: 'banded', nav: 'boxed', type: { display: 'rounded', body: 'system-sans', headingWeight: 700, scale: 1.25, baseSize: 16 }, shape: { radius: 14, density: 'airy' } },
+    theme: { layout: 'split', header: 'banded', nav: 'boxed', type: { display: 'bricolage-grotesque', body: 'manrope', mono: 'fira-code', headingWeight: 700, headingTracking: -0.02, scale: 1.25, baseSize: 16 }, shape: { radius: 14, density: 'airy' } },
   }) },
 ];
 

@@ -38,8 +38,9 @@ const CONTENT_TYPES: [&str; 9] = [
     "application/yaml",
     "application/xml",
 ];
-/// Pages may load their own CSS, script and images, and nothing else.
-const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+/// Pages may load their own CSS, script and images, and nothing else. Fonts
+/// may also be `data:` URLs, because sites carry their web fonts inline.
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 pub struct Site {
     pub id: String,
