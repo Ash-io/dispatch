@@ -159,7 +159,7 @@ export async function addServerProfile({ url, name, email, password, token }) {
   const profile = { id, name: (name || '').trim() || me.user?.username || me.user?.fullName || (email || '').split('@')[0] || 'Dispatch server', kind: 'server', url: serverBaseUrl(url) };
   state.profiles.push(profile);
   state.settings.profiles = state.profiles;
-  state.accounts[id] = { username: me.user?.username, fullName: me.user?.fullName, email: me.user?.email || email || null };
+  state.accounts[id] = { username: me.user?.username, fullName: me.user?.fullName, email: me.user?.email || email || null, role: me.user?.role || null };
   await bridge.write('accounts', state.accounts);
   state.settings.onboarded = true;
   await switchProfile(id);
@@ -173,7 +173,7 @@ export async function serverSignIn({ profileId, url, email, password, token }) {
   const me = await serverAuth({ profileId, url, email, password, token });
   profile.url = serverBaseUrl(url);
   state.settings.profiles = state.profiles;
-  state.accounts[profileId] = { username: me.user?.username, fullName: me.user?.fullName, email: me.user?.email || state.accounts[profileId]?.email || email || null };
+  state.accounts[profileId] = { username: me.user?.username, fullName: me.user?.fullName, email: me.user?.email || state.accounts[profileId]?.email || email || null, role: me.user?.role || state.accounts[profileId]?.role || null };
   state.sessionExpired = false;
   if (profile.id === state.settings.activeProfileId) {
     state.account = state.accounts[profileId];
@@ -290,6 +290,17 @@ export async function refreshAll() {
     const neverChose = state.ws?.id === 'local' && !state.settings.wsChosen && !state.ws.collections.length;
     if (preferred && (currentGone || neverChose)) await openWorkspace(preferred.id, { refresh: false });
     emit('workspace');
+    if (activeProfile()?.kind === 'server' && state.hasKey && !state.account?.role) {
+      try {
+        const me = await cloud.getMe();
+        if (me?.user?.role) {
+          const pid = state.settings.activeProfileId;
+          state.accounts[pid] = { ...(state.accounts[pid] || {}), role: me.user.role };
+          state.account = state.accounts[pid];
+          bridge.write('accounts', state.accounts).catch(() => {});
+        }
+      } catch {}
+    }
     if (isCloud()) await refreshWorkspace(true);
   } catch (e) {
     state.syncError = String(e);
@@ -543,6 +554,35 @@ export function removeLocalCollection(entry) {
   state.ws.collections = state.ws.collections.filter((c) => c !== entry);
   saveWorkspace();
   emit('sidebar');
+}
+
+export async function deleteCollection(entry) {
+  if (isCloud() && state.hasKey && !entry.pendingCreate && !entry.deletedRemotely) {
+    await cloud.deleteCollection(entry.uid);
+  }
+  removeLocalCollection(entry);
+  try {
+    const { wsTabs, closeTab } = await import('./ctx.js');
+    for (const t of wsTabs()) {
+      if (t.ref?.col === entry.uid) await closeTab(t.id, { force: true });
+    }
+  } catch {}
+}
+
+export async function deleteEnvironment(env) {
+  if (isCloud() && state.hasKey && !env.pendingCreate && !env.deletedRemotely) {
+    await cloud.deleteEnvironment(env.uid);
+  }
+  state.ws.environments = state.ws.environments.filter((e) => e !== env);
+  if (state.settings.activeEnvId === env.uid) setActiveEnv(null);
+  saveWorkspace();
+  emit('sidebar', 'env');
+  try {
+    const { wsTabs, closeTab } = await import('./ctx.js');
+    for (const t of wsTabs()) {
+      if (t.kind === 'env' && t.ref?.env === env.uid) await closeTab(t.id, { force: true });
+    }
+  } catch {}
 }
 
 export async function importFromFile() {

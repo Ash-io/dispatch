@@ -58,7 +58,7 @@ export function renderSidebar(root) {
   const list = h('div', { class: 'side-content' });
   const foot = footer();
 
-  root.replaceChildren(h('div', { class: 'titlebar-space drag' }), h('div', { class: 'ws-bar' }, wsSelect, syncBtn), tabs, tools, list, foot);
+  root.replaceChildren(h('div', { class: 'titlebar-space drag' }), h('div', { class: 'ws-bar' }, wsSelect, syncBtn), tabs, tools, list, taskBar(), foot);
 
   function renderList() {
     if (sideTab === 'collections') list.replaceChildren(...collectionsView());
@@ -69,6 +69,26 @@ export function renderSidebar(root) {
   list.scrollTop = scrollPos[sideTab] || 0;
   root.sideTab = sideTab;
   root.renderList = renderList;
+}
+
+const remoteTarget = () => (S.activeProfile()?.kind === 'server' ? 'server' : 'Postman');
+
+let docJob = null;
+export function setDocJob(job) {
+  docJob = job;
+  S.emit('sidebar');
+}
+
+function taskBar() {
+  if (!docJob) return null;
+  return h('div', {
+    class: 'side-task',
+    title: 'Click to open documentation progress',
+    onclick: () => import('./docsite.js').then((m) => m.openDocsSite(docJob.entry)),
+  },
+    icon('globe'),
+    h('span', { class: 'grow ellipsis' }, `${docJob.site?.name || 'Docs'}: ${docJob.currentStep || 'Generating…'}`),
+    h('span', { class: 'badge local' }, docJob.total ? `${docJob.done}/${docJob.total}` : 'running'));
 }
 
 function footer() {
@@ -101,7 +121,7 @@ function profileChip() {
     h('span', { class: 'grow ellipsis' }, p.name));
 }
 
-const importedMsg = (r) => `Imported ${r.format && r.format !== 'Postman' ? `${r.format} as ` : ''}${r.kind} "${r.name}"${r.environments ? ` with ${r.environments} environment${r.environments === 1 ? '' : 's'}` : ''}${S.isCloud() ? ' and uploaded it to Postman' : ''}`;
+const importedMsg = (r) => `Imported ${r.format && r.format !== 'Postman' ? `${r.format} as ` : ''}${r.kind} "${r.name}"${r.environments ? ` with ${r.environments} environment${r.environments === 1 ? '' : 's'}` : ''}${S.isCloud() ? ` and uploaded it to ${remoteTarget()}` : ''}`;
 
 /** Import from a file, pasted text, or a URL to a spec. */
 export function doImport() {
@@ -129,27 +149,16 @@ export function doImport() {
     title: 'Import',
     wide: true,
     body: h('div', null, ta, status),
-    actions: [
-      { label: 'Choose file…', onClick: async () => { try { const r = await S.importFromFile(); if (r) done(r); } catch (e) { fail(e); } return false; } },
-      { label: 'Import', primary: true, onClick: fromText },
-    ],
+    actions: [\n      { label: 'Choose file…', onClick: async () => { try { const r = await S.importFromFile(); if (r) done(r); } catch (e) { fail(e); } return false; } },\n      { label: 'Import', primary: true, onClick: fromText },\n    ],
   });
 }
 
 function newMenu(e) {
-  showMenu(e, [
-    { label: 'New request', icon: 'send', key: '⌘T', onClick: () => C.openDraft() },
-    { label: 'New gRPC request', icon: 'layers', onClick: () => C.openGrpc() },
-    { label: 'New collection', icon: 'box', onClick: newCollection },
-    { label: 'New environment', icon: 'globe', onClick: newEnvironment },
-    '-',
-    { label: 'Import…', icon: 'download', onClick: doImport },
-    { label: 'Open collection from folder…', icon: 'folderOpen', onClick: () => openFolder().then((e) => e && toast(`Opened "${e.name}" from ${e.linkedDir}`), (er) => toast(errText(er), { error: true })) },
-  ]);
+  showMenu(e, [\n    { label: 'New request', icon: 'send', key: '⌘T', onClick: () => C.openDraft() },\n    { label: 'New gRPC request', icon: 'layers', onClick: () => C.openGrpc() },\n    { label: 'New collection', icon: 'box', onClick: newCollection },\n    { label: 'New environment', icon: 'globe', onClick: newEnvironment },\n    '-',\n    { label: 'Import…', icon: 'download', onClick: doImport },\n    { label: 'Open collection from folder…', icon: 'folderOpen', onClick: () => openFolder().then((e) => e && toast(`Opened "${e.name}" from ${e.linkedDir}`), (er) => toast(errText(er), { error: true })) },\n  ]);
 }
 
 export async function newCollection() {
-  const name = await promptDialog({ title: 'New collection', label: S.isCloud() ? `It will be created in "${state.ws.name}" in Postman.` : 'It will be stored on this device only.', value: 'New Collection' });
+  const name = await promptDialog({ title: 'New collection', label: S.isCloud() ? `It will be created in "${state.ws.name}" on ${remoteTarget()}.` : 'It will be stored on this device only.', value: 'New Collection' });
   if (!name) return;
   try { const entry = await S.createCollection(name); C.toggleExpanded(entry.uid, true); sideTab = 'collections'; } catch (e) { toast(errText(e), { error: true }); }
 }
@@ -169,7 +178,7 @@ function collectionsView() {
   if (!cols.length) {
     return [h('div', { class: 'side-empty' },
       h('div', { style: { fontWeight: 600, color: 'var(--text)' } }, 'No collections yet'),
-      h('p', null, S.isCloud() ? (state.syncing ? 'Loading from Postman…' : 'Create one, or import a Postman export.') : 'Collections here stay on this device.'),
+      h('p', null, S.isCloud() ? (state.syncing ? `Loading from ${remoteTarget()}…` : 'Create one, or import a collection.') : 'Collections here stay on this device.'),
       h('div', { class: 'row', style: { justifyContent: 'center' } }, h('button', { class: 'btn sm', onclick: newCollection }, 'New collection'), h('button', { class: 'btn sm', onclick: doImport }, 'Import')))];
   }
   const open = C.expanded();
@@ -190,9 +199,9 @@ function collectionsView() {
 
 function collectionRow(entry, isOpen, active) {
   const status = entry.pushing ? h('span', { class: 'badge local' }, 'syncing')
-    : entry.conflict ? h('span', { class: 'badge err', title: 'Changed in Postman and here' }, 'conflict')
-    : entry.deletedRemotely ? h('span', { class: 'badge err', title: 'Deleted in Postman' }, 'deleted')
-    : entry.dirty && S.isCloud() ? h('span', { class: 'badge dirty', title: 'Local changes not yet in Postman' }, 'unsynced') : null;
+    : entry.conflict ? h('span', { class: 'badge err', title: `Changed on ${remoteTarget()} and here` }, 'conflict')
+    : entry.deletedRemotely ? h('span', { class: 'badge err', title: `Deleted on ${remoteTarget()}` }, 'deleted')
+    : entry.dirty && S.isCloud() ? h('span', { class: 'badge dirty', title: `Local changes not yet on ${remoteTarget()}` }, 'unsynced') : null;
   const extra = [
     entry.folderError ? h('span', { class: 'badge err', title: entry.folderError }, 'folder') : entry.linkedDir ? h('span', { class: 'badge local', title: `Saved to ${entry.linkedDir}` }, 'git') : null,
     mockFor(entry) ? h('span', { class: 'badge ok', title: `Mock server on http://localhost:${mockFor(entry).port}` }, `mock :${mockFor(entry).port}`) : null,
@@ -208,9 +217,7 @@ function collectionRow(entry, isOpen, active) {
   },
     icon('chevron', `chev${isOpen ? ' open' : ''}`),
     icon('box', 'ico'),
-    h('span', { class: 'name', title: entry.name }, entry.name),
-    status, ...extra,
-    h('span', { class: 'actions' }, h('button', { class: 'icon-btn sm', title: 'More', onclick: (e) => { e.stopPropagation(); colMenu(e, entry, row); } }, icon('more'))));
+    h('span', { class: 'name', title: entry.name }, entry.name),\n    status, ...extra,\n    h('span', { class: 'actions' }, h('button', { class: 'icon-btn sm', title: 'More', onclick: (e) => { e.stopPropagation(); colMenu(e, entry, row); } }, icon('more'))));
   dropTarget(row, entry, null);
   return row;
 }
@@ -233,15 +240,37 @@ function colMenu(e, entry, row) {
     { label: 'Rename', icon: 'edit', onClick: async () => { await S.ensureCollection(entry); const n = await promptDialog({ title: 'Rename collection', value: entry.name, confirm: 'Rename' }); if (n) C.renameItem(entry, null, n); } },
     { label: 'Export…', icon: 'upload', onClick: async () => { try { const p = await S.exportCollection(entry); if (p) toast(`Exported to ${p}`); } catch (er) { toast(errText(er), { error: true }); } } },
     S.isCloud() ? '-' : null,
-    S.isCloud() && entry.dirty ? { label: 'Push to Postman now', icon: 'cloudUp', onClick: () => C.pushNow(entry) } : null,
-    S.isCloud() && !entry.pendingCreate ? { label: 'Reload from Postman', icon: 'sync', onClick: async () => {
-      if (entry.dirty && !(await confirmDialog({ title: 'Discard local changes?', message: `"${entry.name}" has changes that aren't in Postman yet. Reloading replaces them with Postman's version.`, confirm: 'Reload', danger: true }))) return;
-      try { await S.pullCollection(entry, { discard: true }); C.refreshCleanTabs(); toast('Reloaded from Postman'); } catch (er) { toast(errText(er), { error: true }); }
+    S.isCloud() && entry.dirty ? { label: `Push to ${remoteTarget()} now`, icon: 'cloudUp', onClick: () => C.pushNow(entry) } : null,
+    S.isCloud() && !entry.pendingCreate ? { label: `Reload from ${remoteTarget()}`, icon: 'sync', onClick: async () => {
+      if (entry.dirty && !(await confirmDialog({ title: 'Discard local changes?', message: `"${entry.name}" has changes that aren't on ${remoteTarget()} yet. Reloading replaces them with ${remoteTarget()}'s version.`, confirm: 'Reload', danger: true }))) return;
+      try { await S.pullCollection(entry, { discard: true }); C.refreshCleanTabs(); toast(`Reloaded from ${remoteTarget()}`); } catch (er) { toast(errText(er), { error: true }); }
     } } : null,
-    !S.isCloud() || entry.deletedRemotely ? '-' : null,
-    !S.isCloud() || entry.deletedRemotely ? { label: 'Remove from Dispatch', icon: 'trash', danger: true, onClick: async () => {
-      if (await confirmDialog({ title: `Remove "${entry.name}"?`, message: 'It will be deleted from this device. Export it first if you want a copy.', confirm: 'Remove', danger: true })) S.removeLocalCollection(entry);
-    } } : null,
+    '-',
+    S.isCloud() && !entry.pendingCreate && !entry.deletedRemotely && S.activeProfile()?.kind === 'server' && state.account?.role && state.account.role !== 'admin'
+      ? { label: 'Delete collection (admin only)', icon: 'trash', danger: true, onClick: () => toast('Only admins can delete collections on this server.', { error: true }) }
+      : {
+          label: entry.deletedRemotely ? 'Remove from Dispatch' : entry.pendingCreate || !S.isCloud() ? 'Delete collection' : `Delete from ${remoteTarget()}…`,
+          icon: 'trash',
+          danger: true,
+          onClick: async () => {
+            const isRemote = S.isCloud() && !entry.pendingCreate && !entry.deletedRemotely;
+            const confirmed = await confirmDialog({
+              title: `Delete "${entry.name}"?`,
+              message: isRemote
+                ? `This will permanently delete "${entry.name}" from ${remoteTarget()} for everyone in this workspace.`
+                : 'It will be deleted from this device.',
+              confirm: 'Delete',
+              danger: true,
+            });
+            if (!confirmed) return;
+            try {
+              await S.deleteCollection(entry);
+              toast(`Deleted "${entry.name}"`);
+            } catch (er) {
+              toast(errText(er), { error: true });
+            }
+          },
+        },
   ].filter((x, i, a) => x !== null && !(x === '-' && (a[i - 1] === '-' || i === a.length - 1))), row);
 }
 
@@ -386,9 +415,9 @@ function environmentsView() {
     h('div', { class: ['tree-row', tab?.kind === 'globals' && 'selected'], onclick: () => C.openGlobals() },
       icon('globe', 'ico'), h('span', { class: 'name' }, 'Globals'),
       state.ws.globals.conflict ? h('span', { class: 'badge err' }, 'conflict') : state.ws.globals.dirty && S.isCloud() ? h('span', { class: 'badge dirty' }, 'unsynced') : null,
-      state.ws.globals.dirty && S.isCloud() ? h('span', { class: 'actions' }, h('button', { class: 'icon-btn sm', title: 'Push globals to Postman', onclick: async (e) => {
+      state.ws.globals.dirty && S.isCloud() ? h('span', { class: 'actions' }, h('button', { class: 'icon-btn sm', title: `Push globals to ${remoteTarget()}`, onclick: async (e) => {
         e.stopPropagation();
-        try { await S.pushGlobals(); toast('Globals synced to Postman'); } catch (er) { if (er instanceof S.ConflictError) C.handleConflict(er); else toast(errText(er), { error: true }); }
+        try { await S.pushGlobals(); toast(`Globals synced to ${remoteTarget()}`); } catch (er) { if (er instanceof S.ConflictError) C.handleConflict(er); else toast(errText(er), { error: true }); }
       } }, icon('cloudUp'))) : null),
     h('div', { class: ['tree-row', tab?.kind === 'vault' && 'selected'], onclick: () => C.openVault() },
       icon('key', 'ico'), h('span', { class: 'name' }, 'Vault'), h('span', { class: 'faint', style: { fontSize: '11px' } }, `${(state.settings.vaultKeys || []).length || ''}`)),
@@ -418,8 +447,34 @@ function envMenu(e, env, row) {
     { label: 'Open', icon: 'edit', onClick: () => C.openEnv(env) },
     { label: 'Set as active', icon: 'check', onClick: () => S.setActiveEnv(env.uid) },
     { label: 'Export…', icon: 'upload', onClick: async () => { try { const p = await S.exportEnvironment(env); if (p) toast(`Exported to ${p}`); } catch (er) { toast(errText(er), { error: true }); } } },
-    S.isCloud() && env.dirty ? { label: 'Push to Postman now', icon: 'cloudUp', onClick: async () => { try { await S.pushEnvironment(env); toast('Synced'); } catch (er) { if (er instanceof S.ConflictError) C.handleConflict(er); else toast(errText(er), { error: true }); } } } : null,
+    S.isCloud() && env.dirty ? { label: `Push to ${remoteTarget()} now`, icon: 'cloudUp', onClick: async () => { try { await S.pushEnvironment(env); toast('Synced'); } catch (er) { if (er instanceof S.ConflictError) C.handleConflict(er); else toast(errText(er), { error: true }); } } } : null,
     { label: 'Reset current values', icon: 'sync', onClick: () => { env.overlay = {}; S.overlaysChanged(); toast('Current values reset to the shared values'); } },
+    '-',
+    S.isCloud() && !env.pendingCreate && !env.deletedRemotely && S.activeProfile()?.kind === 'server' && state.account?.role && state.account.role !== 'admin'
+      ? { label: 'Delete environment (admin only)', icon: 'trash', danger: true, onClick: () => toast('Only admins can delete environments on this server.', { error: true }) }
+      : {
+          label: env.deletedRemotely ? 'Remove from Dispatch' : env.pendingCreate || !S.isCloud() ? 'Delete environment' : `Delete from ${remoteTarget()}…`,
+          icon: 'trash',
+          danger: true,
+          onClick: async () => {
+            const isRemote = S.isCloud() && !env.pendingCreate && !env.deletedRemotely;
+            const confirmed = await confirmDialog({
+              title: `Delete "${env.name}"?`,
+              message: isRemote
+                ? `This will permanently delete "${env.name}" from ${remoteTarget()} for everyone in this workspace.`
+                : 'It will be deleted from this device.',
+              confirm: 'Delete',
+              danger: true,
+            });
+            if (!confirmed) return;
+            try {
+              await S.deleteEnvironment(env);
+              toast(`Deleted "${env.name}"`);
+            } catch (er) {
+              toast(errText(er), { error: true });
+            }
+          },
+        },
   ].filter(Boolean), row);
 }
 
