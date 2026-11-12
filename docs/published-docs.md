@@ -16,12 +16,23 @@ A collection in a workspace on a Dispatch server can be published as a public do
 2. **Scrub** (`scrub.js`): values that must never appear on a page are replaced with consistent fakes. These include vault secrets, the current values of variables on this device, and credential-looking or personal data.
 3. **Facts** (`facts.js`): a structured fact sheet built from examples, history, tests and chains, after scrubbing. Response shapes are merged across samples.
 4. **Write** (`write.js`): if AI writing is on, the configured AI provider writes the prose from the fact sheet only. Text that isn't grounded in the facts, or that uses banned or hedging phrases, is rejected. The step retries once and then leaves a gap for the author. With AI off, every piece of prose is a gap.
-5. **Build** (`build.js`): static HTML, CSS and an OpenAPI file, with the site name, accent colour and logo, plus a changelog that compares this version's structure with the previous one.
+5. **Build** (`build.js`): static HTML, CSS and an OpenAPI file in the site's design (below), with the site name and logo, plus a changelog that compares this version's structure with the previous one.
 6. **Final scan:** the built files are checked again for anything that looks like a real secret. If something is found, publishing is blocked.
 
 Before publishing, the author can review what the AI wrote and what was scrubbed, edit or pin text, preview the site, or export it as a zip.
 
 The AI provider receives the fact sheet, which has already been scrubbed. Nothing else leaves the device until the author publishes.
+
+## Design
+
+The review screen's **Design** tab sets how the site looks, with a live preview in light, dark, desktop and phone views. A design is a theme (`src/js/docgen/theme.js`): a JSON document of choices, never HTML or script.
+
+- **Layouts:** `reference` (sidebar, two columns per endpoint), `split` (code in a dark pane on the right), `editorial` (one reading column, contents on the right) and `index` (a top menu and the overview as a grid). They share the same markup, so search, anchors and code tabs work in all of them.
+- **Presets:** six starting points across the four layouts. After choosing one, you can change the layout, light/dark behaviour, accent, heading, text and code fonts, text size, heading contrast and weight, corners, spacing, rules, overview header and menu highlight.
+- **Fonts** are system font stacks for now, so pages load nothing from outside. Each stack names a voice (transitional serif, geometric, industrial and so on), and the reader's system uses the first family it has, so the result varies by platform.
+- **Contrast:** every theme is checked in code against WCAG AA (4.5:1 for text, method colours, links, code and syntax colours, in each mode it uses). A colour that fails has its lightness moved until it passes, keeping its hue, and the tab says what was adjusted.
+- **Logo:** chosen on the first screen. Any image is redrawn as a PNG at most 96 px tall, which also drops anything an SVG could run, and published inline.
+- **Storage:** the theme is published with each version as `_dispatch/theme.json`. The next build starts from the current version's theme, so everyone publishing the site shares one design, and rolling back restores the old look. A design you haven't published yet is kept on your device until you publish it.
 
 ## Roles
 

@@ -1349,7 +1349,8 @@ import { createScrubber, findSecrets } from '../src/js/docgen/scrub.js';
 import { gatherEndpoints, splitUrl, testsFrom } from '../src/js/docgen/gather.js';
 import { mergeShape, buildFacts, structure, diffStructure, displayPath } from '../src/js/docgen/facts.js';
 import { lint, plan, writeAll, repeatedOpenings } from '../src/js/docgen/write.js';
-import { buildSite, markdown, schemaFrom, previewHtml } from '../src/js/docgen/build.js';
+import { buildSite, markdown, schemaFrom, previewHtml, highlightJson } from '../src/js/docgen/build.js';
+import { PRESETS, DEFAULT_THEME, LAYOUTS, contrast, fixContrast, validateTheme, normalizeTheme, contrastFailures, contrastReport, withAccent, themeCss, toOklch, fromOklch } from '../src/js/docgen/theme.js';
 import { generateDocs, OMIT } from '../src/js/docgen/index.js';
 import { zip, crc32 } from '../src/js/docgen/zip.js';
 
@@ -1535,4 +1536,111 @@ test('zip export writes a readable archive', () => {
   assert.equal(crc32(new TextEncoder().encode('hi')), 0xd8932aac);
   const text = new TextDecoder().decode(bytes);
   assert.ok(text.includes('site/index.html') && text.includes('site/r/a.html'));
+});
+
+// ---------------------------------------------------------------- documentation themes
+
+test('contrast is measured the WCAG way, and fixes keep hue while reaching the minimum', () => {
+  assert.equal(contrast('#ffffff', '#000000').toFixed(1), '21.0');
+  assert.equal(contrast('#767676', '#ffffff').toFixed(2), '4.54');
+  assert.equal(fromOklch(toOklch('#2f6f5e')), '#2f6f5e');
+  for (const [fg, bg] of [['#cccccc', '#ffffff'], ['#88ff88', '#fbfbf9'], ['#333333', '#111111'], ['#ff0000', '#ff3300'], ['#7fd6a4', '#ffffff']]) {
+    const fixed = fixContrast(fg, bg, 4.5);
+    assert.ok(contrast(fixed, bg) >= 4.5, `${fg} on ${bg} became ${fixed}`);
+  }
+  const hue = toOklch('#88ff88').h;
+  assert.ok(Math.abs(toOklch(fixContrast('#88ff88', '#ffffff', 4.5)).h - hue) < 8, 'hue is kept');
+});
+
+test('every preset is a valid theme and passes every contrast check in every mode', () => {
+  assert.equal(PRESETS[0].theme, DEFAULT_THEME);
+  for (const p of PRESETS) {
+    const v = validateTheme(p.theme);
+    assert.deepEqual(v.errors, [], p.id);
+    assert.deepEqual(contrastFailures(p.theme), [], p.id);
+    assert.ok(contrastReport(p.theme).length > 20, p.id);
+  }
+  assert.deepEqual([...new Set(PRESETS.map((p) => p.theme.layout))].sort(), Object.keys(LAYOUTS).sort(), 'presets cover every layout');
+});
+
+test('theme validation refuses unknown values and fonts, and fills what is missing', () => {
+  const { errors, theme } = validateTheme({ layout: 'grid', mode: 'auto', type: { display: 'comic-sans', body: 'rounded', baseSize: 40 }, colors: { light: { bg: 'red' } }, extraCss: 'body{}' });
+  assert.ok(errors.some((e) => /layout must be one of/.test(e)));
+  assert.ok(errors.some((e) => /comic-sans.*catalogue/.test(e)));
+  assert.ok(errors.some((e) => /"rounded" can't be used as a body font/.test(e)));
+  assert.ok(errors.some((e) => /baseSize/.test(e)));
+  assert.ok(errors.some((e) => /colors.light.bg must be/.test(e)));
+  assert.ok(errors.some((e) => /colors.dark is missing/.test(e)));
+  assert.ok(errors.some((e) => /extraCss/.test(e)));
+  assert.equal(theme.layout, 'reference');
+  assert.equal(theme.type.display, DEFAULT_THEME.type.display);
+  assert.equal(theme.extraCss, '');
+  // A dark-only theme doesn't need a light palette.
+  const dark = { ...DEFAULT_THEME, mode: 'dark', colors: { dark: DEFAULT_THEME.colors.dark } };
+  assert.ok(!validateTheme(dark).errors.some((e) => /colors.light/.test(e)));
+});
+
+test('a bad palette is fixed before it is built, and a new accent stays readable', () => {
+  const bad = JSON.parse(JSON.stringify(DEFAULT_THEME));
+  bad.colors.light.muted = '#dddddd';
+  bad.colors.dark.text = '#333333';
+  bad.syntax.dark.string = '#202020';
+  assert.ok(contrastFailures(bad).length >= 3);
+  assert.deepEqual(contrastFailures(normalizeTheme(bad).theme), []);
+  const yellow = withAccent(DEFAULT_THEME, '#ffe600');
+  assert.deepEqual(contrastFailures(yellow), []);
+  assert.ok(contrast(yellow.colors.light.accent, yellow.colors.light.bg) >= 4.5);
+});
+
+test('theme CSS follows the reader in auto mode, can be forced, and never forces one mode on auto themes', () => {
+  const auto = themeCss(DEFAULT_THEME);
+  assert.match(auto, /prefers-color-scheme: dark/);
+  assert.match(auto, /:root\[data-mode="dark"\]/);
+  const night = PRESETS.find((p) => p.theme.mode === 'dark').theme;
+  const css = themeCss(night);
+  assert.ok(!/prefers-color-scheme/.test(css));
+  assert.match(css, /color-scheme: dark/);
+  assert.ok(!/url\(|@import|expression\(/i.test(auto + css));
+});
+
+test('JSON in code blocks is coloured and still escaped', () => {
+  const html = highlightJson(JSON.stringify({ note: '<script>alert(1)</script>', n: 2, ok: true, x: null }, null, 2));
+  assert.ok(!html.includes('<script>'));
+  assert.match(html, /<span class="sx-k">&quot;note&quot;<\/span>/);
+  assert.match(html, /<span class="sx-s">&quot;&lt;script&gt;/);
+  assert.match(html, /<span class="sx-n">2<\/span>/);
+  assert.match(html, /<span class="sx-l">true<\/span>/);
+  assert.equal(highlightJson('not <json>'), 'not &lt;json&gt;');
+});
+
+test('every preset builds a site with its layout, its theme file, and no inline style or script', async () => {
+  for (const p of PRESETS) {
+    const result = await generateDocs({ collection: DOCS_COLLECTION, history: DOCS_HISTORY, useHistory: true, collectionUid: 'col-1', known: [], site: { name: 'Shop API' }, theme: p.theme, baseUrl: 'https://api.shop.test', version: 1 });
+    const file = (path) => result.files.find((f) => f.path === path);
+    assert.deepEqual(JSON.parse(file('_dispatch/theme.json').body), normalizeTheme(p.theme).theme, p.id);
+    const home = file('index.html').body;
+    assert.match(home, new RegExp(`<body[^>]*class="[^"]*layout-${p.theme.layout}[^"]*page-home`), p.id);
+    assert.match(file('r/orders.html').body, /class="[^"]*page-group/);
+    if (p.theme.header === 'split') assert.match(home, /<aside class="hero-code"/, p.id);
+    else assert.ok(!home.includes('hero-code'), p.id);
+    for (const f of result.files.filter((x) => x.path.endsWith('.html'))) {
+      assert.ok(!/\sstyle="/.test(f.body) && !/<style/.test(f.body), `${p.id} ${f.path} has inline style`);
+      assert.ok(!/<script(?![^>]*\bsrc=)/.test(f.body), `${p.id} ${f.path} has inline script`);
+    }
+    assert.match(file('assets/site.css').body, new RegExp(`--accent: ${normalizeTheme(p.theme).theme.colors[p.theme.mode === 'dark' ? 'dark' : 'light'].accent}`));
+    const retheme = result.retheme(DEFAULT_THEME);
+    assert.match(retheme.files.find((f) => f.path === 'index.html').body, /layout-reference/);
+  }
+});
+
+test('only a PNG data URL is published as the logo, and the preview can force a mode', async () => {
+  const build = (logoDataUrl) => buildSite(buildFacts(gatherEndpoints(DOCS_COLLECTION, { scrub: createScrubber() }), {}), {}, { site: { name: 'S', logoDataUrl } });
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.ok(build(png).find((f) => f.path === 'index.html').body.includes(`<img src="${png}"`));
+  for (const bad of ['data:image/svg+xml;base64,PHN2Zz4=', 'https://evil.test/x.png', 'javascript:alert(1)']) {
+    assert.ok(!build(bad).find((f) => f.path === 'index.html').body.includes('<img'), bad);
+  }
+  const files = build('');
+  assert.match(previewHtml(files, 'index.html', { mode: 'dark' }), /<html lang="en" data-mode="dark">/);
+  assert.match(previewHtml(files, 'index.html'), /<html lang="en">/);
 });
